@@ -65,8 +65,16 @@ export async function createApp(config = defaultConfig) {
 
   app.use(createRenderRoutes({ service, config, storage }));
 
+  // Неизвестный маршрут. Отдельного кода в контракте v1 нет, а JOB_NOT_FOUND
+  // здесь вводил бы клиента в заблуждение — используем INVALID_REQUEST с 404.
+  // TODO: добавить ROUTE_NOT_FOUND в §7 при следующей ревизии контракта
+  // (только вместе с остановкой параллельной работы worker'а и UI).
   app.use((req, _res, next) => {
-    next(new ApiError('JOB_NOT_FOUND', `Маршрут ${req.method} ${req.path} не найден.`, { status: 404 }));
+    next(
+      new ApiError('INVALID_REQUEST', `Маршрут ${req.method} ${req.path} не найден.`, {
+        status: 404,
+      }),
+    );
   });
   app.use(errorHandler);
 
