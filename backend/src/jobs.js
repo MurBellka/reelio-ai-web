@@ -22,6 +22,7 @@ import {
   validateRenderRequest,
 } from './contract.js';
 import { ApiError, jobError } from './errors.js';
+import { validateProjectMedia } from './media-validation.js';
 import { creditCostFor } from './quota.js';
 
 const MESSAGES = {
@@ -161,6 +162,28 @@ export class RenderJobService {
 
   async #spawnJob(validated, { jobId, fingerprint, contentHash, attempt }) {
     const { projectId, plan, assets, export: exp, ownerUid, ip } = validated;
+
+    // Содержимое проверяется до кредита и до запуска Job'а: платить за рендер
+    // заведомо негодного материала не должен ни пользователь, ни мы.
+    if (this.config.media?.verify) {
+      const media = await validateProjectMedia({
+        assets,
+        storage: this.storage,
+        limits: this.config.limits,
+        ffprobePath: this.config.media.ffprobePath,
+      });
+      // Характеристики берём из файла, а не со слов клиента: от них зависит
+      // резолв разрешения и оценка размера.
+      for (const asset of assets) {
+        const info = media.byAssetId[asset.id];
+        if (!info) continue;
+        asset.type = info.type;
+        asset.width = info.width;
+        asset.height = info.height;
+        asset.durationSeconds = info.durationSeconds;
+        asset.sizeBytes = info.sizeBytes;
+      }
+    }
 
     const [activeUser, activeGlobal] = await Promise.all([
       this.store.countActiveJobs(ownerUid),

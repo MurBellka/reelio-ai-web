@@ -52,6 +52,7 @@ function testConfig(root, overrides = {}, limits = {}) {
     rateLimits: { editPlan: 1000, render: 1000, cancel: 1000, poll: 1000, ...limits },
     allowedOrigins: new Set(['http://localhost:5353']),
     firebase: { projectId: 'test-project' },
+    media: { verify: false, ffprobePath: 'ffprobe', probeTimeoutMs: 60000 },
     auth: { verifier: fakeVerifier(), disabled: false },
     appCheck: { mode: 'off' },
     limits: {

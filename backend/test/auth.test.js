@@ -44,6 +44,7 @@ function baseConfig(root, { appCheckMode = 'off', limits = {}, verifier } = {}) 
     gemini: { apiKey: '', model: 'gemini-2.5-flash' },
     rateLimits: { editPlan: 1000, render: 1000, cancel: 1000, poll: 1000 },
     firebase: { projectId: 'test-project' },
+    media: { verify: false, ffprobePath: 'ffprobe', probeTimeoutMs: 60000 },
     auth: { verifier, disabled: false },
     appCheck: { mode: appCheckMode },
     limits: {

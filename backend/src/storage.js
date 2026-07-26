@@ -78,6 +78,10 @@ class GcsStorage {
     return { url, expiresAt: new Date(expires).toISOString() };
   }
 
+  async deleteObject(objectPath) {
+    await this.bucket.file(objectPath).delete({ ignoreNotFound: true });
+  }
+
   /** Удаляет всё под префиксом. Возвращает число удалённых объектов. */
   async deletePrefix(prefix) {
     const [files] = await this.bucket.getFiles({ prefix });
@@ -181,6 +185,10 @@ class LocalStorage {
     const expected = this.sign(objectPath, String(expiresMs), scope);
     return expected.length === String(signature).length &&
       timingSafeEqual(Buffer.from(expected), Buffer.from(String(signature)));
+  }
+
+  async deleteObject(objectPath) {
+    await rm(this.pathFor(objectPath), { force: true });
   }
 
   async deletePrefix(prefix) {

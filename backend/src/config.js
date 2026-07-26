@@ -66,6 +66,14 @@ export const config = {
     maxOutputSeconds: int('LIMIT_OUTPUT_SECONDS', 120),
   },
 
+  media: {
+    // Проверка содержимого загруженных файлов. Выключается только для тестов
+    // и локальной разработки, где ffprobe может отсутствовать.
+    verify: process.env.MEDIA_VERIFY !== 'false',
+    ffprobePath: process.env.FFPROBE_PATH || 'ffprobe',
+    probeTimeoutMs: int('MEDIA_PROBE_TIMEOUT_SECONDS', 60) * 1000,
+  },
+
   allowedOrigins: new Set(
     [
       process.env.ALLOWED_ORIGIN || 'https://murbellka.github.io',
