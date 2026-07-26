@@ -12,11 +12,11 @@ import { createApp } from '../src/app.js';
 const WORKER_TOKEN = 'test-worker-token';
 const PROJECT = 'proj_test';
 
-function testConfig(root, overrides = {}) {
+function testConfig(root, overrides = {}, limits = {}) {
   return {
     port: 0,
     gemini: { apiKey: '', model: 'gemini-2.5-flash' },
-    rateLimits: { editPlan: 1000, render: 1000, poll: 1000 },
+    rateLimits: { editPlan: 1000, render: 1000, cancel: 1000, poll: 1000, ...limits },
     allowedOrigins: new Set(['http://localhost:5353']),
     render: {
       mode: 'local',
@@ -38,9 +38,9 @@ function testConfig(root, overrides = {}) {
 }
 
 /** Поднимает приложение на свободном порту. */
-async function startApp(overrides = {}) {
+async function startApp(overrides = {}, limits = {}) {
   const root = await mkdtemp(join(tmpdir(), 'reelio-test-'));
-  const config = testConfig(root, overrides);
+  const config = testConfig(root, overrides, limits);
   const app = await createApp(config);
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
@@ -770,6 +770,45 @@ describe('POST /jobs/{id}/cancel', () => {
     assert.equal(second.status, 202);
     assert.notEqual(second.body.jobId, first.body.jobId);
     assert.equal(second.body.attempt, 2);
+  });
+});
+
+describe('лимиты запросов', () => {
+  it('429 приходит в конверте контракта, а не простым текстом', async () => {
+    const ctx = await startApp({}, { render: 2 });
+    try {
+      const body = renderBody({ projectId: 'proj_rl' });
+      let last;
+      for (let i = 0; i < 5; i += 1) {
+        last = await post(ctx.baseUrl, '/render', body, { 'Idempotency-Key': `k${i}` });
+      }
+      assert.equal(last.status, 429);
+      // §7: любой не-2xx обязан быть JSON-конвертом с машинным кодом.
+      assert.equal(last.body?.error?.code, 'RATE_LIMITED');
+      assert.equal(last.body.error.retryable, true);
+      assert.match(last.body.error.requestId, /^req_/);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it('отмена не делит бюджет с созданием рендера', async () => {
+    // Пользователь, исчерпавший лимит на /render, обязан суметь отменить
+    // задачу — иначе платная работа продолжается против его воли.
+    const ctx = await startApp({}, { render: 1, cancel: 20 });
+    try {
+      const created = await post(ctx.baseUrl, '/render', renderBody({ projectId: 'proj_rl2' }));
+      assert.equal(created.status, 202);
+
+      const blocked = await post(ctx.baseUrl, '/render', renderBody({ projectId: 'proj_rl3' }));
+      assert.equal(blocked.status, 429, 'бюджет /render должен быть исчерпан');
+
+      const cancelled = await post(ctx.baseUrl, `/jobs/${created.body.jobId}/cancel`);
+      assert.equal(cancelled.status, 200, 'отмена не должна блокироваться лимитом /render');
+      assert.equal(cancelled.body.status, 'cancelled');
+    } finally {
+      await ctx.close();
+    }
   });
 });
 

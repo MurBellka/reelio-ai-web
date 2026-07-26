@@ -10,7 +10,7 @@ import { config as defaultConfig, healthSnapshot } from './config.js';
 import { requestEditPlan } from './edit-plan.js';
 import { ApiError, errorHandler } from './errors.js';
 import { RenderJobService } from './jobs.js';
-import { createRenderRoutes } from './routes.js';
+import { createRenderRoutes, rateLimitHandler } from './routes.js';
 import { createRunner } from './runner.js';
 import { createStorage } from './storage.js';
 import { createStore } from './store.js';
@@ -57,7 +57,12 @@ export async function createApp(config = defaultConfig) {
 
   app.post(
     '/edit-plan',
-    rateLimit({ windowMs: 60_000, max: config.rateLimits.editPlan, standardHeaders: true }),
+    rateLimit({
+      windowMs: 60_000,
+      max: config.rateLimits.editPlan,
+      standardHeaders: true,
+      handler: rateLimitHandler,
+    }),
     (req, res, next) => {
       requestEditPlan(config, req.body || {})
         .then((plan) => res.json({ plan }))

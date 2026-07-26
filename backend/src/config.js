@@ -28,6 +28,8 @@ export const config = {
   rateLimits: {
     editPlan: int('RATE_LIMIT_EDIT_PLAN', 20),
     render: int('RATE_LIMIT_RENDER', 10),
+    // Отмена намеренно щедрее создания: см. комментарий в routes.js.
+    cancel: int('RATE_LIMIT_CANCEL', 60),
     poll: int('RATE_LIMIT_POLL', 240),
   },
 

@@ -218,6 +218,24 @@ gcloud secrets add-iam-policy-binding <имя-секрета-gemini> --project "
   --member "serviceAccount:${API_SA}" --role roles/secretmanager.secretAccessor
 ```
 
+## Шаг 6б. Canary-проверка (выполнена)
+
+Перед переключением трафика cloud-mode разворачивается отдельной revision с
+тегом `canary` и **нулевым трафиком**:
+
+```bash
+gcloud run deploy reelio-backend --project "$P" --region europe-west1 \
+  --source backend/ --no-traffic --tag canary \
+  --service-account "$API_SA" \
+  --set-env-vars "…,PUBLIC_BASE_URL=https://canary---reelio-backend-dgmyl44vdq-ew.a.run.app" \
+  --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest,WORKER_TOKEN=reelio-worker-token:latest"
+```
+
+`PUBLIC_BASE_URL` обязан указывать на **canary-адрес**, иначе worker будет
+отчитываться о прогрессе в production-revision, которая про эти задачи не знает.
+
+Переключение трафика — отдельный шаг, требующий подтверждения владельца.
+
 ## Шаг 7. Проверка после деплоя
 
 ```bash

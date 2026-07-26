@@ -36,6 +36,15 @@ function tokenMatches(provided, expected) {
   return timingSafeEqual(a, b);
 }
 
+/**
+ * Ответ при срабатывании лимита. Без него express-rate-limit отдаёт простой
+ * текст «Too many requests…», что нарушает §7: клиент обязан получать единый
+ * JSON-конверт и код RATE_LIMITED, а не гадать по HTTP-статусу.
+ */
+export function rateLimitHandler(req, res, next) {
+  next(new ApiError('RATE_LIMITED', 'Слишком много запросов. Повторите через минуту.'));
+}
+
 export function createRenderRoutes({ service, config, storage }) {
   const router = Router();
 
@@ -43,11 +52,23 @@ export function createRenderRoutes({ service, config, storage }) {
     windowMs: 60_000,
     max: config.rateLimits.render,
     standardHeaders: true,
+    handler: rateLimitHandler,
   });
   const pollLimiter = rateLimit({
     windowMs: 60_000,
     max: config.rateLimits.poll,
     standardHeaders: true,
+    handler: rateLimitHandler,
+  });
+  // Отмена НЕ делит бюджет с /render сознательно: пользователь, несколько раз
+  // повторивший рендер, обязан иметь возможность его остановить — это ровно тот
+  // момент, когда он хочет прекратить платную работу. Операция дешёвая
+  // (флаг в задаче + отмена execution), поэтому лимит щедрый.
+  const cancelLimiter = rateLimit({
+    windowMs: 60_000,
+    max: config.rateLimits.cancel,
+    standardHeaders: true,
+    handler: rateLimitHandler,
   });
 
   // ── POST /uploads — разрешения на прямую загрузку исходников (§8.2) ─────
@@ -120,7 +141,7 @@ export function createRenderRoutes({ service, config, storage }) {
   // ── POST /jobs/{id}/cancel ──────────────────────────────────────────────
   router.post(
     '/jobs/:id/cancel',
-    renderLimiter,
+    cancelLimiter,
     wrap(async (req, res) => {
       const job = await service.cancelJob(jobIdOf(req));
       res.json(toPublicJob(job));
