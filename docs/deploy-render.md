@@ -1,25 +1,36 @@
-# Развёртывание рендера — план (НЕ ВЫПОЛНЕН)
+# Развёртывание рендера
 
-> **Ни одна команда из этого документа не запускалась.** Всё ниже создаёт
-> платные ресурсы или меняет IAM и требует явного подтверждения владельца.
+> **Статус на 2026-07-26: шаги 0–5 ВЫПОЛНЕНЫ** с подтверждения владельца.
+> Инфраструктура создана и проверена настоящим рендером в облаке.
+> **Шаг 6 (переключение живого сервиса) НЕ выполнен** — сознательно, по
+> решению владельца: `reelio-backend` продолжает работать в local mode и
+> облачных задач не запускает.
+>
 > Порядок важен: IAM должен существовать до деплоя, иначе сервис поднимется с
 > избыточными правами.
 
 Проект: `gemini-503615` · регион: `europe-west1` · аккаунт: `kvasizabel509@gmail.com`
 
-## Что есть сейчас (проверено read-only 2026-07-26)
+## Фактическое состояние (2026-07-26, после шагов 0–5)
 
 | Ресурс | Состояние |
 |---|---|
 | Cloud Run service `reelio-backend` | ✅ работает, `https://reelio-backend-dgmyl44vdq-ew.a.run.app` |
-| Сервисный аккаунт сервиса | ⚠️ `794100432449-compute@…` — **дефолтный, с ролью Editor** |
-| Cloud Run Job (worker) | ❌ нет |
-| Бакет рендера | ❌ нет (есть только служебный `run-sources-…`) |
-| Firestore | ❌ API не включён |
-| `reelio-api@` / `reelio-worker@` | ❌ нет |
+| Сервисный аккаунт сервиса | ⚠️ всё ещё `794100432449-compute@…` (**дефолтный, Editor**) — меняется шагом 6 |
+| Cloud Run Job `reelio-ffmpeg-worker` | ✅ развёрнут под `reelio-worker@`, 4 vCPU / 8 GiB / 30 мин |
+| Бакет `reelio-render-eu` | ✅ europe-west1, UBLA, public access prevention = enforced |
+| Firestore (Native, eur3) | ✅ создан |
+| `reelio-api@` / `reelio-worker@` | ✅ созданы, права по минимуму |
+| Секрет `reelio-worker-token` | ✅ в Secret Manager, доступ обоим SA |
 
-Пока этого нет, backend работает в **local mode** и рендер-эндпоинты отвечают
-честно (`health.render.mode = "local"`). Ломаться нечему.
+Сервис по-прежнему в **local mode** (`health.render.mode = "local"`) и облачных
+задач не запускает: пока не выполнен шаг 6, созданная инфраструктура просто
+стоит наготове.
+
+**Проверено настоящим рендером в облаке** (Job запускался напрямую, в обход
+сервиса): plan.json из `gs://` → MP4 в `gs://`. ffprobe подтвердил
+`h264/aac 48 kHz stereo`, кадр `720×1280` и `1080×1920`, длительность 8.000s.
+Тестовые артефакты удалены, бакет пуст.
 
 ## Оценка расходов
 
@@ -73,28 +84,33 @@ gcloud storage buckets create "gs://${BUCKET}" \
   --uniform-bucket-level-access --public-access-prevention
 ```
 
-Lifecycle по контракту §6:
+Lifecycle (backstop к §6):
 
 ```bash
 cat > /tmp/lifecycle.json <<'JSON'
 { "rule": [
   { "action": {"type": "Delete"},
-    "condition": {"age": 1, "matchesPrefix": ["projects/"], "matchesSuffix": ["/tmp/"]} },
-  { "action": {"type": "Delete"},
-    "condition": {"age": 7, "matchesPrefix": ["projects/"]} },
-  { "action": {"type": "Delete"},
-    "condition": {"age": 30} }
+    "condition": {"age": 30, "matchesPrefix": ["projects/"]} }
 ]}
 JSON
 gcloud storage buckets update "gs://${BUCKET}" --lifecycle-file=/tmp/lifecycle.json
 ```
 
-CORS — только на чтение результата из браузера:
+> Раздельные TTL из §6 (1 день на `tmp/`, 7 на `jobs/`, 30 на `sources/`) через
+> lifecycle **невыразимы**: `matchesPrefix` принимает только буквальный префикс,
+> а `projectId` в пути переменный — шаблона `projects/*/jobs/*/tmp/` не бывает.
+> Поэтому lifecycle оставлен грубым предохранителем на 30 дней, а настоящий
+> срок жизни результата задаёт `expiresAt` в Firestore: backend отдаёт
+> `410 RESULT_EXPIRED` через 7 дней, даже если файл ещё физически лежит.
+> Рабочие файлы `tmp/` убирает за собой сам worker.
+
+CORS — чтение результата и **прямая загрузка исходников** (§8.2). Без `PUT`
+браузер не сможет отправить байты в бакет:
 
 ```bash
 cat > /tmp/cors.json <<'JSON'
-[{ "origin": ["https://murbellka.github.io"],
-   "method": ["GET", "HEAD"],
+[{ "origin": ["https://murbellka.github.io", "http://localhost:5353"],
+   "method": ["GET", "HEAD", "PUT"],
    "responseHeader": ["Content-Type", "Content-Disposition", "Content-Length"],
    "maxAgeSeconds": 3600 }]
 JSON
