@@ -1,0 +1,10 @@
+# В образ едет только то, что нужно для запуска.
+test/
+node_modules/
+npm-debug.log*
+.render-local/
+*.md
+.dockerignore
+Dockerfile
+.git
+.gitignore
