@@ -45,6 +45,10 @@ app.get('/', (_req, res) => {
   res.json({ ok: true, service: 'reelio-backend', demo: !GEMINI_API_KEY });
 });
 
+app.get('/health', (_req, res) => {
+  res.json({ ok: true, service: 'reelio-backend', demo: !GEMINI_API_KEY });
+});
+
 // Строгая JSON-схема ответа Gemini (structured output).
 const responseSchema = {
   type: 'object',
