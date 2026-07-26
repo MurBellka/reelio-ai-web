@@ -3,3 +3,6 @@ node_modules/
 .env.*
 !.env.example
 npm-debug.log*
+
+# Локальный режим рендера (§10 контракта): исходники, планы и MP4 тестов.
+.render-local/
