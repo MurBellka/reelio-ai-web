@@ -53,6 +53,17 @@ class ProjectState {
   int get videoCount => videos.length;
   int get photoCount => photos.length;
 
+  /// Наибольшая сторона среди исходников — прокси максимального доступного
+  /// вертикального разрешения экспорта. `null`, если размеры неизвестны.
+  int? get sourceMaxHeight {
+    int? best;
+    for (final a in assets) {
+      final side = a.maxSide;
+      if (side != null && (best == null || side > best)) best = side;
+    }
+    return best;
+  }
+
   EditRequest toRequest() => EditRequest(
     assets: assets,
     prompt: prompt,

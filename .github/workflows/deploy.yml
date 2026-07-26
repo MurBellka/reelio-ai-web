@@ -1,0 +1,66 @@
+name: CI & Deploy (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  # ── Проверка: формат, анализ, тесты. Публикация не идёт, если упало. ──
+  verify:
+    name: Verify (format · analyze · test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+          cache: true
+      - run: flutter pub get
+      - name: Format check
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test
+
+  # ── Сборка Web и публикация через официальный GitHub Pages workflow. ──
+  deploy:
+    name: Build & Deploy
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+          cache: true
+      - run: flutter pub get
+      - name: Build web
+        # REELIO_BACKEND_URL — не секрет (обычный URL). Ключ Gemini НИКОГДА не
+        # передаётся в сборку и не попадает в Pages artifact.
+        run: >
+          flutter build web --release
+          --base-href /reelio-ai-web/
+          --dart-define=REELIO_BACKEND_URL=${{ vars.REELIO_BACKEND_URL }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -230,6 +230,9 @@ class AppTheme {
         contentTextStyle: textTheme.bodyMedium?.copyWith(
           color: scheme.onInverseSurface,
         ),
+        // Приподнимаем плавающие уведомления над нижней панелью кнопок,
+        // чтобы toast не перекрывал «Продолжить»/«Экспортировать».
+        insetPadding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.sm),
         ),

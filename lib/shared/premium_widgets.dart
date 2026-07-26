@@ -100,26 +100,34 @@ class GradientButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.md),
           child: Container(
             constraints: const BoxConstraints(minHeight: 56),
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-            child: Row(
-              mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (icon != null) ...[
-                  Icon(icon, color: Colors.white, size: 22),
-                  const SizedBox(width: 10),
-                ],
-                Flexible(
-                  child: Text(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            alignment: expanded ? Alignment.center : null,
+            // FittedBox масштабирует содержимое вниз на узких экранах (320 px),
+            // поэтому текст и иконка всегда помещаются в одну строку и не
+            // переносятся (баг «Продолжить» с буквой на новой строке).
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (icon != null) ...[
+                    Icon(icon, color: Colors.white, size: 22),
+                    const SizedBox(width: 8),
+                  ],
+                  Text(
                     label,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.visible,
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.labelLarge?.copyWith(
                       color: Colors.white,
                       fontSize: 16,
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

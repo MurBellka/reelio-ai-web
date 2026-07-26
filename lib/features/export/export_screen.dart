@@ -5,10 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../../core/constants.dart';
 import '../../core/formatters.dart';
+import '../../core/platform/file_ops.dart';
 import '../../core/theme.dart';
 import '../../models/enums.dart';
+import '../../models/export_settings.dart';
 import '../../shared/app_background.dart';
 import '../../shared/premium_widgets.dart';
 import '../../shared/stage_progress.dart';
@@ -24,6 +25,20 @@ class ExportScreen extends ConsumerStatefulWidget {
 class _ExportScreenState extends ConsumerState<ExportScreen> {
   bool _exporting = false;
 
+  String _fileName() => Formatters.editPlanFileName(DateTime.now());
+
+  void _selectResolution(ExportResolution choice) {
+    final project = ref.read(projectProvider);
+    final plan = project.plan;
+    if (plan == null) return;
+    final settings = ExportResolver.build(
+      choice: choice,
+      durationSeconds: plan.computedDuration.round(),
+      sourceMaxHeight: project.sourceMaxHeight,
+    );
+    ref.read(projectProvider.notifier).setPlanExport(settings);
+  }
+
   Future<void> _export() async {
     if (_exporting) return; // защита от повторного нажатия
     final plan = ref.read(projectProvider).plan;
@@ -32,29 +47,40 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     try {
       final result = await ref.read(exportServiceProvider).export(plan);
       if (!mounted) return;
-      // На web файла в ФС нет — шарим/скачиваем план из памяти.
-      final file = kIsWeb
-          ? XFile.fromData(
-              utf8.encode(result.planJson),
-              name: 'reelio_plan.json',
-              mimeType: 'application/json',
-            )
-          : XFile(result.planFilePath);
-      await SharePlus.instance.share(
-        ShareParams(
-          files: [file],
-          subject: 'Reelio AI — монтажный план',
-          text:
-              'Демонстрационный экспорт Reelio AI. Настоящий видеофайл '
-              'появится, когда будет подключён серверный рендеринг.',
-        ),
-      );
+      final fileName = _fileName();
+
+      if (kIsWeb) {
+        // Настоящее браузерное скачивание JSON-плана.
+        downloadTextFile(fileName, result.planJson);
+      } else {
+        await SharePlus.instance.share(
+          ShareParams(
+            files: [
+              XFile.fromData(
+                utf8.encode(result.planJson),
+                name: fileName,
+                mimeType: 'application/json',
+              ),
+            ],
+            subject: 'Reelio AI — монтажный план',
+            text:
+                'Монтажный план Reelio AI (JSON). Настоящий MP4 создаётся '
+                'на сервере после подключения рендеринга.',
+          ),
+        );
+      }
       if (!mounted) return;
-      _showDoneSheet();
+      _showDoneSheet(fileName);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Не удалось выполнить экспорт.')),
+          SnackBar(
+            content: const Text(
+              'Не удалось запустить скачивание. Возможно, браузер '
+              'заблокировал загрузку.',
+            ),
+            action: SnackBarAction(label: 'Повторить', onPressed: _export),
+          ),
         );
       }
     } finally {
@@ -62,7 +88,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     }
   }
 
-  void _showDoneSheet() {
+  void _showDoneSheet(String fileName) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -84,9 +110,9 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                 shape: BoxShape.circle,
               ),
               child: const Icon(
-                Icons.check_rounded,
+                Icons.description_rounded,
                 color: AppColors.limeDark,
-                size: 30,
+                size: 28,
               ),
             ),
             const SizedBox(height: 16),
@@ -96,9 +122,13 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Мы сохранили монтажный план и открыли меню «Поделиться». '
-              'Настоящий видеорендеринг MP4 будет подключён позже через '
-              'серверный API.',
+              kIsWeb
+                  ? 'Файл «$fileName» скачан браузером. Это монтажный план (JSON), '
+                        'а не видео. Готовый MP4 появится после подключения '
+                        'серверного рендеринга.'
+                  : 'Мы подготовили монтажный план «$fileName» и открыли меню '
+                        '«Поделиться». Это план (JSON), а не видео — MP4 создаётся '
+                        'на сервере после подключения рендеринга.',
               textAlign: TextAlign.center,
               style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(ctx).colorScheme.onSurfaceVariant,
@@ -120,7 +150,8 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final plan = ref.watch(projectProvider).plan;
+    final project = ref.watch(projectProvider);
+    final plan = project.plan;
     final theme = Theme.of(context);
 
     if (plan == null) {
@@ -129,8 +160,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
       );
     }
 
-    final duration = plan.computedDuration;
-    final estBytes = (duration.clamp(1, 120) * 1.6 * 1024 * 1024).round();
+    final export = plan.export;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Экспорт')),
@@ -148,9 +178,36 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
                   children: [
                     const SectionHeader(
-                      title: 'Параметры экспорта',
-                      subtitle: 'Вертикальный ролик для Reels и Shorts',
+                      title: 'Качество экспорта',
+                      subtitle: 'Вертикальный ролик 9:16 для Reels и Shorts',
                     ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        for (final r in [
+                          ...ExportResolution.concrete,
+                          ExportResolution.maximumAvailable,
+                        ])
+                          ChoiceChip(
+                            label: Text(
+                              r.isAuto ? r.label : '${r.label} · ${r.height}p',
+                            ),
+                            selected: export.resolution == r,
+                            onSelected: (_) => _selectResolution(r),
+                          ),
+                      ],
+                    ),
+                    if (export.isUpscale) ...[
+                      const SizedBox(height: 12),
+                      _WarningCard(
+                        text:
+                            'Выбранное разрешение выше исходного материала. '
+                            'Апскейл растянет кадр, но не добавит отсутствующих '
+                            'деталей.',
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     SoftCard(
                       child: Column(
@@ -158,27 +215,36 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                           _ParamRow(
                             icon: Icons.aspect_ratio_rounded,
                             label: 'Формат',
-                            value:
-                                '${AppConstants.outputAspectRatio} '
-                                '(${AppConstants.outputWidth}×${AppConstants.outputHeight})',
+                            value: '9:16 · ${export.width}×${export.height}',
                           ),
                           const Divider(height: 24),
                           _ParamRow(
                             icon: Icons.high_quality_rounded,
-                            label: 'Качество',
-                            value: '1080p',
+                            label: 'Разрешение',
+                            value: export.resolution.isAuto
+                                ? 'Максимальное (${export.height}p)'
+                                : '${export.height}p',
+                          ),
+                          const Divider(height: 24),
+                          _ParamRow(
+                            icon: Icons.speed_rounded,
+                            label: 'Кадры',
+                            value: '${export.fps} FPS',
                           ),
                           const Divider(height: 24),
                           _ParamRow(
                             icon: Icons.timer_outlined,
                             label: 'Длительность',
-                            value: Formatters.durationHuman(duration),
+                            value: Formatters.durationHuman(
+                              plan.computedDuration,
+                            ),
                           ),
                           const Divider(height: 24),
                           _ParamRow(
                             icon: Icons.sd_storage_rounded,
-                            label: 'Размер (демо)',
-                            value: '≈ ${Formatters.fileSize(estBytes)}',
+                            label: 'Размер (оценка)',
+                            value:
+                                '≈ ${Formatters.fileSize(export.estimatedSizeBytes)}',
                           ),
                         ],
                       ),
@@ -196,10 +262,9 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              'Это демонстрационный экспорт. Приложение сохранит '
-                              'монтажный план (JSON) и откроет меню «Поделиться». '
-                              'Настоящий MP4 будет создаваться на сервере в '
-                              'следующей версии.',
+                              'Экспорт сохраняет монтажный план (JSON) с выбранным '
+                              'разрешением. Тяжёлый рендеринг MP4 выполняется на '
+                              'сервере, а не в браузере, — он подключается отдельно.',
                               style: theme.textTheme.bodyMedium,
                             ),
                           ),
@@ -212,14 +277,56 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
                 child: GradientButton(
-                  label: _exporting ? 'Экспортируем…' : 'Экспортировать',
-                  icon: Icons.ios_share_rounded,
+                  label: _exporting
+                      ? 'Готовим план…'
+                      : (kIsWeb
+                            ? 'Скачать план (JSON)'
+                            : 'Экспортировать план'),
+                  icon: kIsWeb
+                      ? Icons.download_rounded
+                      : Icons.ios_share_rounded,
                   onPressed: _exporting ? null : _export,
                 ),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _WarningCard extends StatelessWidget {
+  const _WarningCard({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.warning_amber_rounded,
+            color: theme.colorScheme.error,
+            size: 22,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onErrorContainer,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

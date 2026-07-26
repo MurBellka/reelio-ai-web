@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/router.dart';
+import '../../core/app_config.dart';
 import '../../core/theme.dart';
 import '../../models/enums.dart';
 import '../../shared/app_background.dart';
@@ -85,7 +86,17 @@ class OnboardingScreen extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const AppLogo(),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const AppLogo(),
+                          if (AppConfig.isDemoMode)
+                            const InfoPill(
+                              label: 'Demo',
+                              icon: Icons.science_rounded,
+                            ),
+                        ],
+                      ),
                       const SizedBox(height: 32),
                       Text(
                         'Преврати моменты\nв готовый Reels',

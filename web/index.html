@@ -1,46 +1,79 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+  <meta name="description" content="AI-редактор Reels: загрузите видео и фотографии, настройте стиль и создайте монтажный план.">
+  <meta name="theme-color" content="#5B21B6">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="reelio_ai">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Reelio AI">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>reelio_ai</title>
+  <title>Reelio AI</title>
   <link rel="manifest" href="manifest.json">
+
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #F5F4FC; }
+    @media (prefers-color-scheme: dark) { html, body { background: #120E22; } }
+    #reelio-loader {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 20px;
+      background: radial-gradient(120% 80% at 50% 0%, #7C3AED22, transparent), #F5F4FC;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      transition: opacity .35s ease; z-index: 9999;
+    }
+    @media (prefers-color-scheme: dark) {
+      #reelio-loader { background: radial-gradient(120% 80% at 50% 0%, #7C3AED33, transparent), #120E22; }
+      #reelio-loader .rl-title { color: #EDEAF7; }
+      #reelio-loader .rl-sub { color: #B6AED6; }
+    }
+    #reelio-loader .rl-mark {
+      width: 68px; height: 68px; border-radius: 20px;
+      background: linear-gradient(135deg, #7C3AED, #5B21B6);
+      box-shadow: 0 12px 30px #5B21B655;
+      display: flex; align-items: center; justify-content: center;
+      animation: rl-pulse 1.4s ease-in-out infinite;
+    }
+    #reelio-loader .rl-mark svg { width: 34px; height: 34px; fill: #fff; }
+    #reelio-loader .rl-title { font-size: 22px; font-weight: 800; color: #1B1533; letter-spacing: -.3px; }
+    #reelio-loader .rl-title span { color: #7C3AED; }
+    #reelio-loader .rl-sub { font-size: 13px; color: #5A5470; }
+    #reelio-loader .rl-bar { width: 160px; height: 4px; border-radius: 4px; background: #DDD6FE; overflow: hidden; }
+    #reelio-loader .rl-bar i { display: block; height: 100%; width: 40%; border-radius: 4px;
+      background: linear-gradient(90deg, #7C3AED, #C4F82A); animation: rl-slide 1.1s ease-in-out infinite; }
+    @keyframes rl-pulse { 0%,100% { transform: scale(1);} 50% { transform: scale(1.08);} }
+    @keyframes rl-slide { 0% { transform: translateX(-120%);} 100% { transform: translateX(320%);} }
+  </style>
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
+  <div id="reelio-loader">
+    <div class="rl-mark">
+      <svg viewBox="0 0 24 24"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm6 4v8l6-4-6-4z"/></svg>
+    </div>
+    <div class="rl-title">Reelio <span>AI</span></div>
+    <div class="rl-sub">Загружаем редактор…</div>
+    <div class="rl-bar"><i></i></div>
+  </div>
 
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
+  <script>
+    // Прячем загрузочный экран, когда Flutter отрисовал первый кадр.
+    window.addEventListener('flutter-first-frame', function () {
+      var el = document.getElementById('reelio-loader');
+      if (!el) return;
+      el.style.opacity = '0';
+      setTimeout(function () { el.remove(); }, 400);
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

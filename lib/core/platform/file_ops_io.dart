@@ -9,3 +9,13 @@ Future<String> writeTempFile(String filename, String content) async {
   await file.writeAsString(content);
   return file.path;
 }
+
+/// На мобильных/десктопе скачивание не используется — файл шарится системным
+/// меню. Заглушка нужна для единого API фасада.
+void downloadTextFile(
+  String filename,
+  String content, {
+  String mimeType = 'application/json',
+}) {
+  // no-op: см. share на нативных платформах.
+}

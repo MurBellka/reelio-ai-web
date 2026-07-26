@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/router.dart';
 import '../../core/theme.dart';
 import '../../models/enums.dart';
+import '../../services/ai_editing_service.dart';
 import '../../shared/app_background.dart';
 import '../../state/providers.dart';
 
@@ -68,6 +69,12 @@ class _ProcessingScreenState extends ConsumerState<ProcessingScreen>
       controller.setStage(AppStage.preview);
       _navigated = true;
       context.pushReplacement(AppRoutes.preview);
+    } on AiEditingException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
+      context.pop();
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -99,6 +106,7 @@ class _ProcessingScreenState extends ConsumerState<ProcessingScreen>
     );
     if (cancel == true && mounted) {
       _progress.stop();
+      ref.read(aiServiceProvider).cancel();
       context.pop();
     }
   }

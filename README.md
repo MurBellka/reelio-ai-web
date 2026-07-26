@@ -144,3 +144,28 @@ abstract class VideoExportService {
 5. Speech‑to‑text для реальных субтитров и каталог лицензированной музыки с ducking.
 
 Список действий владельца перед публикацией — см. [`PUBLISHING.md`](PUBLISHING.md).
+
+---
+
+## Обновление v2 — Gemini, разрешения экспорта, CI/CD
+
+### Настоящий AI через Gemini (по конфигурации)
+- Интерфейс `AiEditingService` + реализации `GeminiAiEditingService` и `MockAiEditingService`.
+- Переключение через `--dart-define=REELIO_BACKEND_URL=…`. Без него — **Demo Mode** (мок), в интерфейсе виден бейдж «Demo».
+- Клиент делает запрос к **защищённому backend'у** (папка `backend/`), который вызывает Gemini и возвращает строго типизированный JSON-план. `GEMINI_API_KEY` живёт только в backend'е и **никогда** не попадает в Flutter/JS/Pages.
+- В клиенте: таймаут, повтор при временной ошибке, отмена, клиентский rate-limit, проверка JSON-схемы ответа и защита от повреждённого ответа (`gemini_plan_parser.dart`).
+- Gemini создаёт только **план**. Настоящий MP4 собирает FFmpeg render worker (ещё не реализован).
+
+### Backend
+См. [`backend/README.md`](backend/README.md). Ключ — через `.env` (не коммитится) или секреты хостинга. CORS ограничен `https://murbellka.github.io` и локальными адресами.
+
+### Экспорт и разрешение
+- `ExportResolution` (720p / 1080p / 2K / 4K / Максимальное) и `ExportSettings` (в `EditPlan`).
+- По умолчанию — максимально доступное качество по исходникам; предупреждение при апскейле; оценка размера; 30 FPS.
+- На Web — настоящее скачивание JSON-плана (`reelio-edit-plan-YYYY-MM-DD.json`); на iOS/Android — системный Share. Честное разделение «Монтажный план готов» vs «MP4 готов».
+
+### Предпросмотр
+Реальный последовательный плеер клипов: видео — через видеоплеер, фото — с pan/zoom; субтитры в безопасной зоне, play/pause/прогресс/время, заглушка для форматов, требующих серверной перекодировки. Ресурсы освобождаются.
+
+### CI/CD
+`.github/workflows/deploy.yml`: на push в `main` — проверка (format → analyze → test), затем сборка Web (`--base-href /reelio-ai-web/`) и публикация через официальный GitHub Pages workflow. Ключи в артефакт Pages не попадают.

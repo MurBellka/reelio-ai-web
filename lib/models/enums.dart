@@ -93,6 +93,47 @@ enum CaptionStyle {
       .firstWhere((e) => e.name == value, orElse: () => CaptionStyle.clean);
 }
 
+/// Варианты разрешения вертикального (9:16) экспорта.
+enum ExportResolution {
+  hd720('720p', 720, 1280),
+  fullHd1080('Full HD', 1080, 1920),
+  twoK1440('2K', 1440, 2560),
+  fourK2160('4K', 2160, 3840),
+
+  /// Особое значение: подобрать максимально доступное качество по исходникам.
+  maximumAvailable('Максимальное', 0, 0);
+
+  const ExportResolution(this.label, this.width, this.height);
+
+  final String label;
+
+  /// Ширина/высота вертикального кадра 9:16. Для [maximumAvailable] — 0,
+  /// фактические значения вычисляются из исходных материалов.
+  final int width;
+  final int height;
+
+  bool get isAuto => this == ExportResolution.maximumAvailable;
+
+  /// Короткая подпись `1080×1920`.
+  String get dimensionsLabel => isAuto ? 'авто' : '$width×$height';
+
+  /// Все конкретные (не авто) варианты по возрастанию высоты.
+  static List<ExportResolution> get concrete => const [
+    ExportResolution.hd720,
+    ExportResolution.fullHd1080,
+    ExportResolution.twoK1440,
+    ExportResolution.fourK2160,
+  ];
+
+  String get storageValue => name;
+
+  static ExportResolution fromStorage(String value) =>
+      ExportResolution.values.firstWhere(
+        (e) => e.name == value,
+        orElse: () => ExportResolution.maximumAvailable,
+      );
+}
+
 /// Основные этапы пользовательского сценария.
 enum AppStage {
   onboarding('Старт'),

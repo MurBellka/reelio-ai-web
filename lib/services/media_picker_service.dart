@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -12,7 +13,15 @@ import '../shared/platform_media.dart';
 /// Максимальное время ожидания метаданных видео. Некоторые контейнеры
 /// (например AVI/MKV) не поддерживаются плеером и иначе могли бы
 /// зависнуть на неопределённое время вместо быстрой ошибки.
-const Duration _kDurationProbeTimeout = Duration(seconds: 8);
+const Duration _kProbeTimeout = Duration(seconds: 8);
+
+/// Метаданные видео, прочитанные на клиенте.
+class _VideoMeta {
+  const _VideoMeta({this.durationSeconds, this.width, this.height});
+  final double? durationSeconds;
+  final int? width;
+  final int? height;
+}
 
 /// Ошибка выбора материалов с сообщением на русском языке.
 class MediaPickerException implements Exception {
@@ -38,7 +47,7 @@ class MediaPickerService {
   /// Открывает системный выбор нескольких видео и фото.
   ///
   /// Возвращает пустой список, если пользователь отменил выбор.
-  /// Для видео пытается определить длительность.
+  /// Для видео и фото пытается определить длительность и размеры.
   Future<List<MediaAsset>> pickMedia() async {
     final List<XFile> files;
     try {
@@ -57,8 +66,17 @@ class MediaPickerService {
     for (final file in files) {
       final type = _detectType(file);
       double? duration;
+      int? width;
+      int? height;
       if (type == MediaType.video) {
-        duration = await _probeDuration(file.path);
+        final meta = await _probeVideo(file.path);
+        duration = meta.durationSeconds;
+        width = meta.width;
+        height = meta.height;
+      } else {
+        final size = await _probePhoto(file);
+        width = size?.$1;
+        height = size?.$2;
       }
       assets.add(
         MediaAsset(
@@ -67,6 +85,8 @@ class MediaPickerService {
           name: file.name,
           type: type,
           durationSeconds: duration,
+          width: width,
+          height: height,
         ),
       );
     }
@@ -78,22 +98,44 @@ class MediaPickerService {
     mimeType: file.mimeType,
   );
 
-  /// Определяет длительность видео. Возвращает `null`, если длительность не
-  /// удалось прочитать (формат без превью, повреждён, недоступен или не
-  /// ответил за отведённое время) — материал при этом не отклоняется,
+  /// Определяет длительность и размеры видео. Возвращает пустые метаданные,
+  /// если файл не удалось прочитать (формат без превью, повреждён, недоступен
+  /// или не ответил за отведённое время) — материал при этом не отклоняется,
   /// а помечается предупреждением в [MediaLimits.validateBatch].
-  Future<double?> _probeDuration(String path) async {
+  Future<_VideoMeta> _probeVideo(String path) async {
     // На web выбранный файл доступен как blob-URL, а не как файл ФС.
     final controller = platformVideoController(path);
     try {
-      await controller.initialize().timeout(_kDurationProbeTimeout);
+      await controller.initialize().timeout(_kProbeTimeout);
       final ms = controller.value.duration.inMilliseconds;
-      if (ms <= 0) return null;
-      return ms / 1000.0;
+      final size = controller.value.size;
+      return _VideoMeta(
+        durationSeconds: ms > 0 ? ms / 1000.0 : null,
+        width: size.width > 0 ? size.width.round() : null,
+        height: size.height > 0 ? size.height.round() : null,
+      );
     } catch (_) {
-      return null;
+      return const _VideoMeta();
     } finally {
       unawaited(controller.dispose());
+    }
+  }
+
+  /// Определяет размеры изображения через декодер. Возвращает `null`, если
+  /// формат не декодируется в текущем окружении (например HEIC в браузере).
+  Future<(int, int)?> _probePhoto(XFile file) async {
+    try {
+      final bytes = await file.readAsBytes().timeout(_kProbeTimeout);
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final w = frame.image.width;
+      final h = frame.image.height;
+      frame.image.dispose();
+      codec.dispose();
+      if (w <= 0 || h <= 0) return null;
+      return (w, h);
+    } catch (_) {
+      return null;
     }
   }
 

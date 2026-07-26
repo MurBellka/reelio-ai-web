@@ -8,12 +8,11 @@ import '../../core/theme.dart';
 import '../../models/edit_plan.dart';
 import '../../models/enums.dart';
 import '../../models/media_asset.dart';
-import '../../models/project_state.dart';
 import '../../shared/app_background.dart';
 import '../../shared/premium_widgets.dart';
-import '../../shared/reel_preview.dart';
 import '../../shared/stage_progress.dart';
 import '../../state/providers.dart';
+import 'montage_player.dart';
 
 class PreviewScreen extends ConsumerStatefulWidget {
   const PreviewScreen({super.key});
@@ -22,56 +21,11 @@ class PreviewScreen extends ConsumerStatefulWidget {
   ConsumerState<PreviewScreen> createState() => _PreviewScreenState();
 }
 
-class _PreviewScreenState extends ConsumerState<PreviewScreen>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _playback;
-
-  @override
-  void initState() {
-    super.initState();
-    final plan = ref.read(projectProvider).plan;
-    final seconds = (plan?.computedDuration ?? 15).clamp(1, 120).toDouble();
-    _playback =
-        AnimationController(
-          vsync: this,
-          duration: Duration(milliseconds: (seconds * 1000).round()),
-        )..addStatusListener((s) {
-          if (s == AnimationStatus.completed) {
-            _playback.forward(from: 0); // цикличный демо-предпросмотр
-          }
-        });
-  }
-
-  @override
-  void dispose() {
-    _playback.dispose();
-    super.dispose();
-  }
-
-  void _togglePlay() {
-    setState(() {
-      if (_playback.isAnimating) {
-        _playback.stop();
-      } else {
-        _playback.forward(from: _playback.value >= 1.0 ? 0 : _playback.value);
-      }
-    });
-  }
-
-  MediaAsset? _coverAsset(ProjectState project, EditPlan plan) {
-    final coverId = plan.coverClipId;
-    final clip = coverId == null
-        ? (plan.clips.isNotEmpty ? plan.clips.first : null)
-        : plan.clips.where((c) => c.id == coverId).firstOrNull;
-    if (clip == null) return null;
-    return project.assets.where((a) => a.path == clip.filePath).firstOrNull;
-  }
-
+class _PreviewScreenState extends ConsumerState<PreviewScreen> {
   @override
   Widget build(BuildContext context) {
     final project = ref.watch(projectProvider);
     final plan = project.plan;
-    final theme = Theme.of(context);
 
     if (plan == null) {
       return const Scaffold(
@@ -79,8 +33,10 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen>
       );
     }
 
-    final cover = _coverAsset(project, plan);
     final total = plan.computedDuration;
+    final assetsByPath = <String, MediaAsset>{
+      for (final a in project.assets) a.path: a,
+    };
 
     return Scaffold(
       appBar: AppBar(title: const Text('Предпросмотр')),
@@ -99,59 +55,15 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen>
                   children: [
                     Center(
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 420),
-                        child: AnimatedBuilder(
-                          animation: _playback,
-                          builder: (context, _) => DemoReelSurface(
-                            cover: cover,
-                            style: plan.style,
-                            caption: plan.captions.enabled
-                                ? plan.captions.sampleText
-                                : null,
-                            captionColorHex: plan.captions.colorHex,
-                            captionStyle: plan.captions.style,
-                            musicLabel: plan.music.track.hasAudio
-                                ? plan.music.track.label
-                                : null,
-                            showPlay: true,
-                            isPlaying: _playback.isAnimating,
-                            progress: _playback.value,
-                            onTap: _togglePlay,
-                            badge: const _DemoTag(),
-                          ),
+                        constraints: const BoxConstraints(maxHeight: 440),
+                        child: MontagePlayer(
+                          plan: plan,
+                          assetsByPath: assetsByPath,
+                          badge: const _DemoTag(),
                         ),
                       ),
                     ),
                     const SizedBox(height: 12),
-                    AnimatedBuilder(
-                      animation: _playback,
-                      builder: (context, _) => Row(
-                        children: [
-                          IconButton.filledTonal(
-                            onPressed: _togglePlay,
-                            icon: Icon(
-                              _playback.isAnimating
-                                  ? Icons.pause_rounded
-                                  : Icons.play_arrow_rounded,
-                            ),
-                          ),
-                          Expanded(
-                            child: Slider(
-                              value: _playback.value.clamp(0.0, 1.0),
-                              onChanged: (v) {
-                                _playback.stop();
-                                _playback.value = v;
-                              },
-                            ),
-                          ),
-                          Text(
-                            '${Formatters.duration(_playback.value * total)} / ${Formatters.duration(total)}',
-                            style: theme.textTheme.labelMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
                     _ReadyCard(plan: plan),
                     const SizedBox(height: 12),
                     Row(

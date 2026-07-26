@@ -26,6 +26,13 @@ class Formatters {
     return '$s сек';
   }
 
+  /// Имя файла экспортируемого монтажного плана, например
+  /// `reelio-edit-plan-2026-07-26.json`.
+  static String editPlanFileName(DateTime now) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return 'reelio-edit-plan-${now.year}-${two(now.month)}-${two(now.day)}.json';
+  }
+
   /// Демонстрационный размер файла из байтов.
   static String fileSize(int bytes) {
     if (bytes < 1024) return '$bytes Б';

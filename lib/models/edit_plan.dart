@@ -1,4 +1,5 @@
 import 'enums.dart';
+import 'export_settings.dart';
 
 /// Настройки субтитров в монтажном плане.
 class CaptionSettings {
@@ -101,11 +102,20 @@ class EditClip {
     this.start,
     this.end,
     this.sourceName = '',
+    this.mediaId = '',
+    this.reason = '',
   });
 
   final String id;
   final String filePath;
   final MediaType type;
+
+  /// Идентификатор исходного материала (используется backend/Gemini).
+  final String mediaId;
+
+  /// Пояснение AI, почему выбран этот фрагмент (не показывается как reasoning,
+  /// служит короткой подписью в редакторе).
+  final String reason;
 
   /// Длительность фрагмента на таймлайне (сек).
   final double duration;
@@ -130,6 +140,8 @@ class EditClip {
     start: start,
     end: end,
     sourceName: sourceName,
+    mediaId: mediaId,
+    reason: reason,
   );
 
   Map<String, dynamic> toJson() => {
@@ -141,6 +153,8 @@ class EditClip {
     'end': end,
     'transition': transition,
     'sourceName': sourceName,
+    if (mediaId.isNotEmpty) 'mediaId': mediaId,
+    if (reason.isNotEmpty) 'reason': reason,
   };
 
   factory EditClip.fromJson(Map<String, dynamic> json) => EditClip(
@@ -152,6 +166,8 @@ class EditClip {
     end: (json['end'] as num?)?.toDouble(),
     transition: json['transition'] as String? ?? 'cut',
     sourceName: json['sourceName'] as String? ?? '',
+    mediaId: json['mediaId'] as String? ?? '',
+    reason: json['reason'] as String? ?? '',
   );
 }
 
@@ -166,6 +182,7 @@ class EditPlan {
     required this.music,
     required this.clips,
     this.coverClipId,
+    this.export = ExportSettings.defaults,
   });
 
   final String id;
@@ -179,6 +196,9 @@ class EditPlan {
   /// Идентификатор клипа, выбранного как обложка.
   final String? coverClipId;
 
+  /// Параметры экспорта (разрешение, fps, оценка размера).
+  final ExportSettings export;
+
   /// Фактическая длительность как сумма фрагментов.
   double get computedDuration =>
       clips.fold<double>(0, (sum, clip) => sum + clip.duration);
@@ -188,6 +208,7 @@ class EditPlan {
     CaptionSettings? captions,
     MusicSettings? music,
     String? coverClipId,
+    ExportSettings? export,
   }) => EditPlan(
     id: id,
     prompt: prompt,
@@ -197,6 +218,7 @@ class EditPlan {
     music: music ?? this.music,
     clips: clips ?? this.clips,
     coverClipId: coverClipId ?? this.coverClipId,
+    export: export ?? this.export,
   );
 
   Map<String, dynamic> toJson() => {
@@ -207,6 +229,7 @@ class EditPlan {
     'captions': captions.toJson(),
     'music': music.toJson(),
     'coverClipId': coverClipId,
+    'export': export.toJson(),
     'clips': clips.map((c) => c.toJson()).toList(),
   };
 
@@ -222,6 +245,11 @@ class EditPlan {
       (json['music'] as Map).cast<String, dynamic>(),
     ),
     coverClipId: json['coverClipId'] as String?,
+    export: json['export'] == null
+        ? ExportSettings.defaults
+        : ExportSettings.fromJson(
+            (json['export'] as Map).cast<String, dynamic>(),
+          ),
     clips: (json['clips'] as List)
         .map((e) => EditClip.fromJson((e as Map).cast<String, dynamic>()))
         .toList(),

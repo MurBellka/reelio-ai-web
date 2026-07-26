@@ -1,12 +1,15 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/app_config.dart';
 import '../core/media_validation.dart';
 import '../models/edit_plan.dart';
 import '../models/enums.dart';
+import '../models/export_settings.dart';
 import '../models/media_asset.dart';
 import '../models/project_state.dart';
 import '../services/ai_editing_service.dart';
+import '../services/gemini_ai_editing_service.dart';
 import '../services/media_picker_service.dart';
 import '../services/storage_service.dart';
 import '../services/video_export_service.dart';
@@ -17,9 +20,16 @@ final storageServiceProvider = Provider<StorageService>(
   (_) => const StorageService(),
 );
 
-final aiServiceProvider = Provider<AiEditingService>(
-  (_) => const MockAiEditingService(),
-);
+/// Выбирает реальный Gemini-планировщик, если задан backend
+/// (`--dart-define=REELIO_BACKEND_URL=…`), иначе — мок (Demo Mode).
+final aiServiceProvider = Provider<AiEditingService>((ref) {
+  if (AppConfig.hasBackend) {
+    final service = GeminiAiEditingService();
+    ref.onDispose(service.cancel);
+    return service;
+  }
+  return const MockAiEditingService();
+});
 
 final exportServiceProvider = Provider<VideoExportService>(
   (_) => const MockVideoExportService(),
@@ -195,6 +205,12 @@ class ProjectController extends Notifier<ProjectState> {
         coverAssetId: clipId,
       ),
     );
+  }
+
+  void setPlanExport(ExportSettings export) {
+    final plan = state.plan;
+    if (plan == null) return;
+    _emit(state.copyWith(plan: plan.copyWith(export: export)));
   }
 
   // --- Черновик ------------------------------------------------------------

@@ -4,7 +4,19 @@ import '../core/media_validation.dart';
 import '../models/edit_plan.dart';
 import '../models/edit_request.dart';
 import '../models/enums.dart';
+import '../models/export_settings.dart';
 import '../models/media_asset.dart';
+
+/// Наибольшая сторона среди исходников — прокси максимально доступного
+/// вертикального разрешения для экспорта. `null`, если размеры неизвестны.
+int? sourceMaxHeightOf(List<MediaAsset> assets) {
+  int? best;
+  for (final a in assets) {
+    final side = a.maxSide;
+    if (side != null && (best == null || side > best)) best = side;
+  }
+  return best;
+}
 
 /// Абстракция AI-планировщика монтажа.
 ///
@@ -12,6 +24,21 @@ import '../models/media_asset.dart';
 /// на настоящий HTTP-клиент к серверному API без изменения экранов.
 abstract class AiEditingService {
   Future<EditPlan> createEditPlan(EditRequest request);
+
+  /// Отменяет текущий запрос. Для мока — no-op.
+  void cancel() {}
+
+  /// Работает ли сервис в демо-режиме (без настоящего Gemini).
+  bool get isDemo => true;
+}
+
+/// Ошибка планировщика с сообщением на русском языке для пользователя.
+class AiEditingException implements Exception {
+  const AiEditingException(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 /// Мок-реализация: строит детерминированный план из выбранных материалов.
@@ -25,6 +52,12 @@ class MockAiEditingService implements AiEditingService {
   static const double _minClip = 1.0;
 
   @override
+  bool get isDemo => true;
+
+  @override
+  void cancel() {}
+
+  @override
   Future<EditPlan> createEditPlan(EditRequest request) async {
     // Небольшая задержка имитирует сетевой вызов; основная анимация прогресса
     // живёт на экране обработки, чтобы не запускать два процесса сразу.
@@ -32,6 +65,11 @@ class MockAiEditingService implements AiEditingService {
 
     final target = MediaLimits.clampOutputSeconds(request.durationSeconds);
     final clips = _buildClips(request.assets, target, request.style);
+    final export = ExportResolver.build(
+      choice: ExportResolution.maximumAvailable,
+      durationSeconds: target,
+      sourceMaxHeight: sourceMaxHeightOf(request.assets),
+    );
 
     return EditPlan(
       id: uuid.v4(),
@@ -42,6 +80,7 @@ class MockAiEditingService implements AiEditingService {
       music: request.music,
       clips: clips,
       coverClipId: clips.isNotEmpty ? clips.first.id : null,
+      export: export,
     );
   }
 

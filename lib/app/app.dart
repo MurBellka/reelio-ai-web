@@ -33,7 +33,37 @@ class _ReelioAppState extends State<ReelioApp> {
         );
         return MediaQuery(
           data: mq.copyWith(textScaler: clamped),
-          child: child!,
+          child: _CenteredShell(child: child!),
+        );
+      },
+    );
+  }
+}
+
+/// На широких экранах (десктоп/планшет) приложение показывается как
+/// вертикальный телефонный контейнер по центру, а не растягивается на всю
+/// ширину. На телефоне отдаётся как есть.
+class _CenteredShell extends StatelessWidget {
+  const _CenteredShell({required this.child});
+
+  final Widget child;
+
+  static const double _phoneWidth = 460;
+  static const double _breakpoint = 640;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth <= _breakpoint) return child;
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        return ColoredBox(
+          color: isDark ? const Color(0xFF0B0819) : const Color(0xFFE7E4F5),
+          child: Center(
+            child: ClipRect(
+              child: SizedBox(width: _phoneWidth, child: child),
+            ),
+          ),
         );
       },
     );
