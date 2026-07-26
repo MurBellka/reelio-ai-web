@@ -206,9 +206,13 @@ gcloud run jobs deploy reelio-ffmpeg-worker \
 ## Шаг 6. Переключение backend'а в cloud mode
 
 ```bash
+# Адрес берётся из сервиса, а не пишется руками — см. §PUBLIC_BASE_URL ниже.
+STATUS_URL=$(gcloud run services describe reelio-backend \
+  --project "$P" --region europe-west1 --format="value(status.url)")
+
 gcloud run services update reelio-backend --project "$P" --region europe-west1 \
   --service-account "$API_SA" \
-  --set-env-vars "RENDER_BUCKET=${BUCKET},RENDER_JOB_NAME=reelio-ffmpeg-worker,RENDER_JOB_REGION=europe-west1,GOOGLE_CLOUD_PROJECT=${P},PUBLIC_BASE_URL=https://reelio-backend-dgmyl44vdq-ew.a.run.app" \
+  --set-env-vars "RENDER_BUCKET=${BUCKET},RENDER_JOB_NAME=reelio-ffmpeg-worker,RENDER_JOB_REGION=europe-west1,GOOGLE_CLOUD_PROJECT=${P},PUBLIC_BASE_URL=${STATUS_URL}" \
   --update-secrets "REELIO_WORKER_TOKEN=reelio-worker-token:latest"
 ```
 
@@ -238,19 +242,40 @@ gcloud run deploy reelio-backend --project "$P" --region europe-west1 \
 
 Переключение трафика — отдельный шаг, требующий подтверждения владельца.
 
-### ⚠️ Долг: `PUBLIC_BASE_URL` указывает на canary-адрес
+### `PUBLIC_BASE_URL` — только постоянный URL сервиса (долг закрыт)
 
-Сейчас `PUBLIC_BASE_URL = https://canary---…run.app`. Пока тег `canary` висит на
-боевой revision, всё работает. Но **удаление тега после выката тихо сломает
-рендер**: worker потеряет адрес для отчётов, задачи будут виснуть в `queued` и
-падать в `WORKER_TIMEOUT` — ровно тот отказ, который однажды уже стоил
-расследования (см. историю с хвостовым `\n` в секрете).
+`PUBLIC_BASE_URL` обязан равняться **`status.url`** сервиса, а не адресу тега:
 
-Лечится одной revision с `PUBLIC_BASE_URL` на **основном** URL сервиса. Делать
-это на стадии 10% нельзя: тогда 90% отчётов worker'а уходило бы в старую
-revision, которая про эти задачи не знает. Поэтому — сразу после выката 100%.
+```bash
+STATUS_URL=$(gcloud run services describe reelio-backend \
+  --project "$P" --region europe-west1 --format="value(status.url)")
+```
 
-**Порядок снятия тега: сначала перевести `PUBLIC_BASE_URL`, потом удалять тег.**
+Адрес тега (`https://canary---…run.app`) сюда прописывать **нельзя**: тег живёт
+ровно до уборки после выката, а его удаление тихо ломает рендер — worker теряет
+адрес для отчётов, задачи виснут в `queued` и падают в `WORKER_TIMEOUT`. Это тот
+же класс отказа, что и хвостовой `\n` в секрете: конвейер «работает», но
+результат до пользователя не доходит.
+
+Исключение — момент выката со сплитом трафика. Пока часть трафика идёт на старую
+revision, отчёты worker'а обязаны идти по адресу тега новой revision, иначе часть
+из них попадёт в revision, которая про эти задачи не знает. Порядок такой:
+
+1. canary с нулевым трафиком и `PUBLIC_BASE_URL` = адрес тега — проверка;
+2. сплит трафика — проверка совместимости старых маршрутов;
+3. 100% на новую revision;
+4. **сразу после** — новая revision с `PUBLIC_BASE_URL` = `status.url`, проверка
+   через её тег, затем 100% на неё;
+5. только теперь можно снимать теги.
+
+Проверка, что всё сошлось: в логах отчёты worker'а идут на адрес **без**
+префикса тега.
+
+```bash
+gcloud logging read 'httpRequest.requestUrl:"/internal/jobs/"' \
+  --project "$P" --freshness=15m --format="value(httpRequest.requestUrl)" \
+  | sed -E 's#(https://[^/]+)/internal.*#\1#' | sort | uniq -c
+```
 
 ### Про поэтапный выкат: важное ограничение
 
