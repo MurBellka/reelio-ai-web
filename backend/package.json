@@ -15,7 +15,9 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
-    "express-rate-limit": "^7.4.0"
+    "express-rate-limit": "^7.4.0",
+    "ffprobe-static": "^3.1.0",
+    "firebase-admin": "^14.2.0"
   },
   "optionalDependencies": {
     "@google-cloud/firestore": "^7.10.0",

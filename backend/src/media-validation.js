@@ -13,6 +13,37 @@ import { ApiError } from './errors.js';
 
 const exec = promisify(execFile);
 
+/**
+ * Путь к ffprobe. В образе Cloud Run (buildpacks) системного ffprobe нет,
+ * поэтому запасной вариант — бинарник из пакета ffprobe-static. Разрешается
+ * один раз и кэшируется: это обращение к диску, а не к сети.
+ */
+let resolvedFfprobe;
+async function resolveFfprobe(preferred) {
+  if (resolvedFfprobe) return resolvedFfprobe;
+  const candidates = [preferred].filter(Boolean);
+  try {
+    const mod = await import('ffprobe-static');
+    const bundled = mod.default?.path ?? mod.path;
+    if (bundled) candidates.push(bundled);
+  } catch {
+    // Пакета нет — остаётся системный ffprobe.
+  }
+  for (const candidate of candidates) {
+    try {
+      await exec(candidate, ['-version'], { timeout: 10_000 });
+      resolvedFfprobe = candidate;
+      return candidate;
+    } catch {
+      // Пробуем следующий.
+    }
+  }
+  throw new ApiError(
+    'INTERNAL',
+    'Проверка медиафайлов недоступна на сервере.',
+  );
+}
+
 /** Контейнеры/кодеки, которые мы готовы принять. */
 const ALLOWED_VIDEO_CODECS = new Set([
   'h264', 'hevc', 'vp8', 'vp9', 'av1', 'mpeg4', 'mpeg2video', 'mjpeg', 'prores',
@@ -26,6 +57,7 @@ const ALLOWED_IMAGE_CODECS = new Set([
  * Таймаут обязателен: битый файл может подвесить probe надолго.
  */
 async function probe(url, { ffprobePath, timeoutMs }) {
+  const binary = await resolveFfprobe(ffprobePath);
   const args = [
     '-v', 'error',
     '-print_format', 'json',
@@ -37,7 +69,7 @@ async function probe(url, { ffprobePath, timeoutMs }) {
     url,
   ];
   try {
-    const { stdout } = await exec(ffprobePath, args, {
+    const { stdout } = await exec(binary, args, {
       timeout: timeoutMs,
       maxBuffer: 8 * 1024 * 1024,
     });
