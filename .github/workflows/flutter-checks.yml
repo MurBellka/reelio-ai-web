@@ -1,0 +1,50 @@
+# Fast quality gate for pull requests and pushes to main.
+#
+# Responsibility split (see also deploy-pages.yml):
+#   * This workflow OWNS `dart format` verification (that check lives ONLY here,
+#     so it is never duplicated) plus analyze + test as the pull-request gate.
+#   * deploy-pages.yml owns the release web build + publish on pushes to main.
+#
+# It deliberately does NOT build the web release — that heavy step belongs to
+# the deploy workflow — so the two workflows do not repeat the same heavy work
+# unnecessarily.
+name: Flutter checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel superseded runs for the same branch / PR.
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Format, analyze, test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter (latest stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Static analysis
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
