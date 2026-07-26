@@ -46,8 +46,10 @@ export function parsePlanUri(planUri) {
     // file:///abs/path/projects/{p}/jobs/{j}/plan.json — корень локального
     // «бакета» получаем, отрезав относительный путь объекта (§10).
     const filePath = decodeURIComponent(planUri.slice('file://'.length));
-    const marker = '/projects/';
-    const at = filePath.lastIndexOf(marker);
+    // Схема путей задаётся backend'ом: users/{uid}/projects/… либо projects/….
+    // Корень локального «бакета» — всё, что до первого из этих сегментов.
+    let at = filePath.indexOf('/users/');
+    if (at < 0) at = filePath.lastIndexOf('/projects/');
     if (at < 0) {
       throw new WorkerError('INVALID_REQUEST', 'Некорректный адрес монтажного плана.', {
         field: 'REELIO_PLAN_URI',
@@ -83,12 +85,19 @@ export function loadEnv(env = process.env) {
   const workerToken = (env.REELIO_WORKER_TOKEN || '').trim();
   registerSecret(workerToken);
 
+  // Префиксы задаёт backend (в них зашит проверенный uid владельца). Значения
+  // по умолчанию сохраняют совместимость со старой схемой путей.
+  const projectPrefix = env.REELIO_PROJECT_PREFIX || `projects/${projectId}/`;
+  const jobPrefix = env.REELIO_JOB_PREFIX || `${projectPrefix}jobs/${jobId}/`;
+
   const contractVersion = int(env, 'REELIO_CONTRACT_VERSION', 1);
   const plan = parsePlanUri(planUri);
 
   return {
     jobId,
     projectId,
+    projectPrefix,
+    jobPrefix,
     contractVersion,
     mode: plan.mode,
     bucket: plan.mode === 'cloud' ? plan.bucket : env.REELIO_BUCKET || '',

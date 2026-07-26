@@ -13,7 +13,21 @@ export const ERROR_CATALOG = {
   RESOLUTION_UNSUPPORTED: { status: 400, retryable: false },
   DURATION_EXCEEDED: { status: 400, retryable: false },
   UNAUTHENTICATED: { status: 401, retryable: false },
+  EMAIL_NOT_VERIFIED: { status: 403, retryable: false },
+  APP_CHECK_FAILED: { status: 403, retryable: false },
   FORBIDDEN: { status: 403, retryable: false },
+
+  // Квоты публичной беты (§11).
+  DAILY_LIMIT_REACHED: { status: 429, retryable: false },
+  GLOBAL_DAILY_LIMIT_REACHED: { status: 429, retryable: true },
+  TOO_MANY_ACTIVE_JOBS_GLOBAL: { status: 429, retryable: true },
+  EDIT_PLAN_LIMIT_REACHED: { status: 429, retryable: false },
+
+  // Проверка загруженных материалов (§12).
+  MEDIA_INVALID: { status: 400, retryable: false },
+  MEDIA_TOO_LARGE: { status: 400, retryable: false },
+  MEDIA_TOO_LONG: { status: 400, retryable: false },
+  PROJECT_TOO_LARGE: { status: 400, retryable: false },
   JOB_NOT_FOUND: { status: 404, retryable: false },
   RESULT_NOT_READY: { status: 404, retryable: true },
   IDEMPOTENCY_KEY_REUSED: { status: 409, retryable: false },
@@ -84,7 +98,7 @@ export function errorHandler(err, req, res, _next) {
     const e = new ApiError('FORBIDDEN', 'Источник запроса не разрешён.');
     return res.status(e.status).json(e.toBody(requestId));
   }
-  console.error(`[${requestId}] unhandled:`, err?.code || err?.name || 'Error');
+  console.error(`[${requestId}] unhandled:`, err?.stack || err?.name || 'Error');
   const e = new ApiError('INTERNAL', 'Внутренняя ошибка сервера.');
   return res.status(e.status).json(e.toBody(requestId));
 }

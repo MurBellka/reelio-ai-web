@@ -5,7 +5,7 @@
 // Подписанный URL никогда не логируется.
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 
 class GcsStorage {
@@ -76,6 +76,13 @@ class GcsStorage {
     }
     const [url] = await this.bucket.file(objectPath).getSignedUrl(options);
     return { url, expiresAt: new Date(expires).toISOString() };
+  }
+
+  /** Удаляет всё под префиксом. Возвращает число удалённых объектов. */
+  async deletePrefix(prefix) {
+    const [files] = await this.bucket.getFiles({ prefix });
+    await Promise.all(files.map((f) => f.delete({ ignoreNotFound: true })));
+    return files.length;
   }
 
   /**
@@ -174,6 +181,19 @@ class LocalStorage {
     const expected = this.sign(objectPath, String(expiresMs), scope);
     return expected.length === String(signature).length &&
       timingSafeEqual(Buffer.from(expected), Buffer.from(String(signature)));
+  }
+
+  async deletePrefix(prefix) {
+    const full = this.pathFor(prefix.replace(/\/+$/, ''));
+    let count = 0;
+    try {
+      const entries = await readdir(full, { recursive: true, withFileTypes: true });
+      count = entries.filter((e) => e.isFile()).length;
+    } catch {
+      return 0;
+    }
+    await rm(full, { recursive: true, force: true });
+    return count;
   }
 
   /** Локальный аналог signed write URL: приём байтов через PUT /uploads/file. */

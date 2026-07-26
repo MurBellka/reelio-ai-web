@@ -11,6 +11,39 @@ import { createApp } from '../src/app.js';
 
 const WORKER_TOKEN = 'test-worker-token';
 const PROJECT = 'proj_test';
+const UID = 'testuser1';
+const OTHER_UID = 'testuser2';
+
+/**
+ * Подставной верификатор Firebase. Формат токена — `uid:состояние`, что
+ * позволяет в одном тесте играть за разных пользователей и воспроизводить
+ * неподтверждённую почту, истёкший и поддельный токен.
+ */
+function fakeVerifier() {
+  return {
+    async verifyIdToken(token) {
+      if (token === 'expired' || token === 'forged' || !token.includes(':')) {
+        throw new Error('invalid token');
+      }
+      const [uid, state] = token.split(':');
+      return { uid, email: `${uid}@example.com`, emailVerified: state === 'verified' };
+    },
+    async verifyAppCheckToken(token) {
+      if (token !== 'appcheck-ok') throw new Error('invalid app check');
+      return { appId: 'test-app' };
+    },
+    async deleteUser() {},
+  };
+}
+
+const tokenFor = (uid = UID, state = 'verified') => `${uid}:${state}`;
+const authHeaders = (uid = UID, state = 'verified') => ({
+  Authorization: `Bearer ${tokenFor(uid, state)}`,
+  'X-Firebase-AppCheck': 'appcheck-ok',
+});
+
+/** Путь исходника в схеме с проверенным uid. */
+const srcPath = (uid, projectId, name) => `users/${uid}/projects/${projectId}/sources/${name}`;
 
 function testConfig(root, overrides = {}, limits = {}) {
   return {
@@ -18,6 +51,24 @@ function testConfig(root, overrides = {}, limits = {}) {
     gemini: { apiKey: '', model: 'gemini-2.5-flash' },
     rateLimits: { editPlan: 1000, render: 1000, cancel: 1000, poll: 1000, ...limits },
     allowedOrigins: new Set(['http://localhost:5353']),
+    firebase: { projectId: 'test-project' },
+    auth: { verifier: fakeVerifier(), disabled: false },
+    appCheck: { mode: 'off' },
+    limits: {
+      userDailyCredits: 100,
+      globalDailyCredits: 1000,
+      ipDailyCredits: 1000,
+      maxActiveJobsPerUser: 50,
+      maxActiveJobsGlobal: 100,
+      editPlanDaily: 100,
+      maxVideos: 20,
+      maxPhotos: 20,
+      maxSingleVideoSeconds: 600,
+      maxProjectVideoSeconds: 3600,
+      maxProjectBytes: 2 * 1024 * 1024 * 1024,
+      maxOutputSeconds: 120,
+      ...(overrides.limits || {}),
+    },
     render: {
       mode: 'local',
       bucket: '',
@@ -38,9 +89,9 @@ function testConfig(root, overrides = {}, limits = {}) {
 }
 
 /** Поднимает приложение на свободном порту. */
-async function startApp(overrides = {}, limits = {}) {
+async function startApp(overrides = {}, limits = {}, betaLimits = {}) {
   const root = await mkdtemp(join(tmpdir(), 'reelio-test-'));
-  const config = testConfig(root, overrides, limits);
+  const config = testConfig(root, { ...overrides, limits: betaLimits }, limits);
   const app = await createApp(config);
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
@@ -71,7 +122,7 @@ function renderBody(overrides = {}) {
       {
         id: 'asset_a',
         type: 'video',
-        objectPath: `projects/${projectId}/sources/asset_a.mp4`,
+        objectPath: srcPath(UID, projectId, 'asset_a.mp4'),
         durationSeconds: 40,
         width: 1080,
         height: 1920,
@@ -96,14 +147,22 @@ function renderBody(overrides = {}) {
 async function post(baseUrl, path, body, headers = {}) {
   const res = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', ...authHeaders(), ...headers },
     body: JSON.stringify(body ?? {}),
   });
   return { status: res.status, body: await res.json().catch(() => null), headers: res.headers };
 }
 
+async function del(baseUrl, path, headers = {}) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders(), ...headers },
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
 async function get(baseUrl, path, headers = {}) {
-  const res = await fetch(`${baseUrl}${path}`, { headers });
+  const res = await fetch(`${baseUrl}${path}`, { headers: { ...authHeaders(), ...headers } });
   const text = await res.text();
   let parsed = null;
   try {
@@ -157,14 +216,14 @@ describe('POST /uploads', () => {
         {
           id: 'asset_a',
           type: 'video',
-          objectPath: `projects/${projectId}/sources/asset_a.mp4`,
+          objectPath: srcPath(UID, projectId, 'asset_a.mp4'),
           contentType: 'video/mp4',
           sizeBytes: 1024,
         },
         {
           id: 'asset_b',
           type: 'photo',
-          objectPath: `projects/${projectId}/sources/asset_b.jpg`,
+          objectPath: srcPath(UID, projectId, 'asset_b.jpg'),
           contentType: 'image/jpeg',
         },
       ],
@@ -180,7 +239,7 @@ describe('POST /uploads', () => {
 
     const [first] = res.body.uploads;
     assert.equal(first.assetId, 'asset_a');
-    assert.equal(first.objectPath, 'projects/proj_up/sources/asset_a.mp4');
+    assert.equal(first.objectPath, srcPath(UID, 'proj_up', 'asset_a.mp4'));
     assert.equal(first.method, 'PUT');
     assert.equal(first.headers['Content-Type'], 'video/mp4');
     assert.ok(first.uploadUrl);
@@ -227,7 +286,7 @@ describe('POST /uploads', () => {
 
   it('запись вне sources/ проекта запрещена', async () => {
     const body = uploadBody('proj_esc');
-    body.assets[0].objectPath = 'projects/proj_esc/jobs/job_1/output/reel_1920p.mp4';
+    body.assets[0].objectPath = `users/${UID}/projects/proj_esc/jobs/job_1/output/reel_1920p.mp4`;
     const res = await post(ctx.baseUrl, '/uploads', body);
     assert.equal(res.status, 400);
     assert.equal(res.body.error.code, 'INVALID_OBJECT_PATH');
@@ -235,7 +294,7 @@ describe('POST /uploads', () => {
 
   it('запись в чужой проект запрещена', async () => {
     const body = uploadBody('proj_mine');
-    body.assets[0].objectPath = 'projects/victim/sources/asset_a.mp4';
+    body.assets[0].objectPath = `users/${OTHER_UID}/projects/victim/sources/asset_a.mp4`;
     const res = await post(ctx.baseUrl, '/uploads', body);
     assert.equal(res.status, 400);
     assert.equal(res.body.error.code, 'INVALID_OBJECT_PATH');
@@ -294,14 +353,14 @@ describe('POST /render', () => {
   it('сохраняет plan.json по пути из контракта', async () => {
     const res = await post(ctx.baseUrl, '/render', renderBody({ projectId: 'proj_plan' }));
     const snapshot = await ctx.app.locals.storage.readJson(
-      `projects/proj_plan/jobs/${res.body.jobId}/plan.json`,
+      `users/${UID}/projects/proj_plan/jobs/${res.body.jobId}/plan.json`,
     );
     assert.equal(snapshot.contractVersion, 1);
     assert.equal(snapshot.plan.id, 'plan_1');
-    assert.equal(snapshot.assets[0].objectPath, 'projects/proj_plan/sources/asset_a.mp4');
+    assert.equal(snapshot.assets[0].objectPath, srcPath(UID, 'proj_plan', 'asset_a.mp4'));
     assert.equal(
       snapshot.output.videoObjectPath,
-      `projects/proj_plan/jobs/${res.body.jobId}/output/reel_1920p.mp4`,
+      `users/${UID}/projects/proj_plan/jobs/${res.body.jobId}/output/reel_1920p.mp4`,
     );
   });
 
@@ -327,7 +386,7 @@ describe('POST /render', () => {
 
   it('отклоняет чужой objectPath', async () => {
     const body = renderBody({ projectId: 'proj_path' });
-    body.assets[0].objectPath = 'projects/victim/sources/a.mp4';
+    body.assets[0].objectPath = `users/${OTHER_UID}/projects/victim/sources/a.mp4`;
     const res = await post(ctx.baseUrl, '/render', body);
     assert.equal(res.status, 400);
     assert.equal(res.body.error.code, 'INVALID_OBJECT_PATH');
@@ -403,20 +462,42 @@ describe('защита от дубликатов', () => {
     assert.equal(results.filter((r) => r.status === 202).length, 1);
   });
 
-  it('лимит активных задач на проект — 429', async () => {
-    const a = await post(ctx.baseUrl, '/render', renderBody({ projectId: 'proj_limit' }));
-    const b = renderBody({ projectId: 'proj_limit' });
-    b.plan.durationSeconds = 9;
-    const c = renderBody({ projectId: 'proj_limit' });
-    c.plan.durationSeconds = 10;
+  it('лимит активных задач — на пользователя, а не на проект', async () => {
+    // Пользователь не должен обходить лимит, просто заведя второй проект.
+    const ctx2 = await startApp({}, {}, { maxActiveJobsPerUser: 1 });
+    try {
+      const a = await post(ctx2.baseUrl, '/render', renderBody({ projectId: 'proj_one' }));
+      assert.equal(a.status, 202);
 
-    assert.equal(a.status, 202);
-    assert.equal((await post(ctx.baseUrl, '/render', b)).status, 202);
+      const b = await post(ctx2.baseUrl, '/render', renderBody({ projectId: 'proj_two' }));
+      assert.equal(b.status, 429, 'второй проект того же пользователя не обходит лимит');
+      assert.equal(b.body.error.code, 'TOO_MANY_ACTIVE_JOBS');
 
-    const third = await post(ctx.baseUrl, '/render', c);
-    assert.equal(third.status, 429);
-    assert.equal(third.body.error.code, 'TOO_MANY_ACTIVE_JOBS');
-    assert.equal(third.body.error.retryable, true);
+      // Другому пользователю чужой лимит не мешает.
+      const other = await fetch(`${ctx2.baseUrl}/render`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(OTHER_UID),
+        },
+        body: JSON.stringify({
+          ...renderBody({ projectId: 'proj_other' }),
+          assets: [
+            {
+              id: 'asset_a',
+              type: 'video',
+              objectPath: srcPath(OTHER_UID, 'proj_other', 'asset_a.mp4'),
+              durationSeconds: 40,
+              width: 1080,
+              height: 1920,
+            },
+          ],
+        }),
+      });
+      assert.equal(other.status, 202, 'лимит одного пользователя не блокирует другого');
+    } finally {
+      await ctx2.close();
+    }
   });
 });
 
@@ -560,7 +641,7 @@ describe('канал прогресса worker → backend', () => {
     const res = await post(
       ctx.baseUrl,
       `/internal/jobs/${job.jobId}/progress`,
-      { phase: 'done', result: { objectPath: `projects/proj_nofile/jobs/${job.jobId}/output/reel_1920p.mp4` } },
+      { phase: 'done', result: { objectPath: `users/${UID}/projects/proj_nofile/jobs/${job.jobId}/output/reel_1920p.mp4` } },
       workerHeaders(),
     );
     assert.equal(res.status, 400);
@@ -568,11 +649,11 @@ describe('канал прогресса worker → backend', () => {
 
   it('результат вне каталога задачи отклоняется', async () => {
     const job = await newJob('proj_escape');
-    await putOutput(ctx, 'projects/victim/jobs/other/output/reel_1920p.mp4');
+    await putOutput(ctx, `users/${OTHER_UID}/projects/victim/jobs/other/output/reel_1920p.mp4`);
     const res = await post(
       ctx.baseUrl,
       `/internal/jobs/${job.jobId}/progress`,
-      { phase: 'done', result: { objectPath: 'projects/victim/jobs/other/output/reel_1920p.mp4' } },
+      { phase: 'done', result: { objectPath: `users/${OTHER_UID}/projects/victim/jobs/other/output/reel_1920p.mp4` } },
       workerHeaders(),
     );
     assert.equal(res.status, 400);
@@ -620,9 +701,9 @@ describe('успешное завершение и /download', () => {
   async function succeed(projectId, content = 'fake-mp4-bytes') {
     const created = await post(ctx.baseUrl, '/render', renderBody({ projectId }));
     const job = created.body;
-    const objectPath = `projects/${projectId}/jobs/${job.jobId}/output/reel_1920p.mp4`;
+    const objectPath = `users/${UID}/projects/${projectId}/jobs/${job.jobId}/output/reel_1920p.mp4`;
     await putOutput(ctx, objectPath, content);
-    await putOutput(ctx, `projects/${projectId}/jobs/${job.jobId}/output/thumbnail.jpg`, 'jpg');
+    await putOutput(ctx, `users/${UID}/projects/${projectId}/jobs/${job.jobId}/output/thumbnail.jpg`, 'jpg');
     const res = await post(
       ctx.baseUrl,
       `/internal/jobs/${job.jobId}/progress`,
@@ -688,6 +769,7 @@ describe('успешное завершение и /download', () => {
     const { job } = await succeed('proj_redirect');
     const res = await fetch(`${ctx.baseUrl}/download?jobId=${job.jobId}&redirect=1`, {
       redirect: 'manual',
+      headers: authHeaders(),
     });
     assert.equal(res.status, 302);
     assert.match(res.headers.get('location'), /download\/file\?/);
@@ -728,19 +810,18 @@ describe('POST /jobs/{id}/cancel', () => {
     assert.equal(again.body.status, 'cancelled');
   });
 
-  it('отменённая задача освобождает лимит проекта', async () => {
-    const p = 'proj_cancel_slot';
-    const first = await post(ctx.baseUrl, '/render', renderBody({ projectId: p }));
-    const b = renderBody({ projectId: p });
-    b.plan.durationSeconds = 9;
-    await post(ctx.baseUrl, '/render', b);
+  it('отменённая задача освобождает слот пользователя', async () => {
+    const ctx2 = await startApp({}, {}, { maxActiveJobsPerUser: 1 });
+    try {
+      const first = await post(ctx2.baseUrl, '/render', renderBody({ projectId: 'slot_a' }));
+      assert.equal(first.status, 202);
+      assert.equal((await post(ctx2.baseUrl, '/render', renderBody({ projectId: 'slot_b' }))).status, 429);
 
-    const c = renderBody({ projectId: p });
-    c.plan.durationSeconds = 10;
-    assert.equal((await post(ctx.baseUrl, '/render', c)).status, 429);
-
-    await post(ctx.baseUrl, `/jobs/${first.body.jobId}/cancel`);
-    assert.equal((await post(ctx.baseUrl, '/render', c)).status, 202);
+      await post(ctx2.baseUrl, `/jobs/${first.body.jobId}/cancel`);
+      assert.equal((await post(ctx2.baseUrl, '/render', renderBody({ projectId: 'slot_b' }))).status, 202);
+    } finally {
+      await ctx2.close();
+    }
   });
 
   it('отмена завершённой задачи — 409', async () => {

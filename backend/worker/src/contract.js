@@ -115,19 +115,23 @@ export function thumbnailPath(outputPrefix) {
   return `${outputPrefix}/thumbnail.jpg`;
 }
 
-export function logPath(projectId, jobId) {
-  return `projects/${projectId}/jobs/${jobId}/logs/worker.log`;
+export function logPath(jobPrefix) {
+  return `${jobPrefix}logs/worker.log`;
 }
 
-export function tmpPrefix(projectId, jobId) {
-  return `projects/${projectId}/jobs/${jobId}/tmp/`;
+export function tmpPrefix(jobPrefix) {
+  return `${jobPrefix}tmp/`;
 }
 
 /**
- * §6 — путь обязан лежать внутри projects/{projectId}/ и не содержать
- * traversal-сегментов. Возвращает путь либо бросает исключение через `onBad`.
+ * §6 — путь обязан лежать внутри выданного backend'ом префикса проекта и не
+ * содержать traversal-сегментов.
+ *
+ * Сам префикс worker НЕ конструирует: схему путей знает только backend, он же
+ * встраивает в неё проверенный uid владельца. Здесь мы лишь проверяем, что
+ * план не пытается выйти за пределы того, что нам разрешили.
  */
-export function checkObjectPath(objectPath, projectId) {
+export function checkObjectPath(objectPath, projectPrefix) {
   if (typeof objectPath !== 'string' || objectPath.length === 0 || objectPath.length > 1024) {
     return 'Путь объекта пуст или слишком длинный.';
   }
@@ -140,7 +144,7 @@ export function checkObjectPath(objectPath, projectId) {
   if (objectPath.includes('..') || objectPath.includes('//')) {
     return 'Путь объекта содержит недопустимые сегменты.';
   }
-  if (!objectPath.startsWith(`projects/${projectId}/`)) {
+  if (!projectPrefix || !objectPath.startsWith(projectPrefix)) {
     return 'Путь объекта вне каталога проекта.';
   }
   return null;

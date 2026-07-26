@@ -20,6 +20,10 @@ import {
 import { ApiError } from '../src/errors.js';
 
 const PROJECT = 'proj_test';
+const UID = 'testuser1';
+
+/** Путь исходника в схеме с проверенным uid. */
+const srcPath = (uid, projectId, name) => `users/${uid}/projects/${projectId}/sources/${name}`;
 
 function request(overrides = {}) {
   const projectId = overrides.projectId || PROJECT;
@@ -30,7 +34,7 @@ function request(overrides = {}) {
       {
         id: 'asset_a',
         type: 'video',
-        objectPath: `projects/${projectId}/sources/asset_a.mp4`,
+        objectPath: srcPath(UID, projectId, 'asset_a.mp4'),
         durationSeconds: 40,
         width: 1080,
         height: 1920,
@@ -38,7 +42,7 @@ function request(overrides = {}) {
       {
         id: 'asset_b',
         type: 'photo',
-        objectPath: `projects/${projectId}/sources/asset_b.jpg`,
+        objectPath: srcPath(UID, projectId, 'asset_b.jpg'),
         width: 2160,
         height: 3840,
       },
@@ -73,7 +77,7 @@ function expectApiError(code, fn) {
 
 describe('валидация RenderRequest', () => {
   it('принимает корректный запрос и нормализует поля', () => {
-    const v = validateRenderRequest(request());
+    const v = validateRenderRequest(request(), UID);
     assert.equal(v.projectId, PROJECT);
     assert.equal(v.plan.clips.length, 2);
     assert.equal(v.plan.captions.colorHex, '#FFFFFF');
@@ -84,64 +88,64 @@ describe('валидация RenderRequest', () => {
 
   it('отвергает чужую версию контракта', () => {
     expectApiError('CONTRACT_VERSION_UNSUPPORTED', () =>
-      validateRenderRequest(request({ contractVersion: 2 })),
+      validateRenderRequest(request({ contractVersion: 2 }), UID),
     );
   });
 
   it('требует mediaId, известный в assets', () => {
     const body = request();
     body.plan.clips[0].mediaId = 'asset_missing';
-    expectApiError('ASSET_MISSING', () => validateRenderRequest(body));
+    expectApiError('ASSET_MISSING', () => validateRenderRequest(body, UID));
   });
 
   it('требует mediaId в принципе (filePath не годится)', () => {
     const body = request();
     delete body.plan.clips[0].mediaId;
     body.plan.clips[0].filePath = '/Users/me/video.mp4';
-    expectApiError('PLAN_INVALID', () => validateRenderRequest(body));
+    expectApiError('PLAN_INVALID', () => validateRenderRequest(body, UID));
   });
 
   it('ловит превышение лимита длительности', () => {
     const body = request();
     body.plan.clips[0].duration = MAX_DURATION_SECONDS;
     body.plan.clips[1].duration = 10;
-    expectApiError('DURATION_EXCEEDED', () => validateRenderRequest(body));
+    expectApiError('DURATION_EXCEEDED', () => validateRenderRequest(body, UID));
   });
 
   it('ловит обрезку за пределами исходника', () => {
     const body = request();
     body.plan.clips[0].end = 999;
-    expectApiError('PLAN_INVALID', () => validateRenderRequest(body));
+    expectApiError('PLAN_INVALID', () => validateRenderRequest(body, UID));
   });
 
   it('ловит end <= start', () => {
     const body = request();
     body.plan.clips[0].start = 6;
     body.plan.clips[0].end = 6;
-    expectApiError('PLAN_INVALID', () => validateRenderRequest(body));
+    expectApiError('PLAN_INVALID', () => validateRenderRequest(body, UID));
   });
 
   it('ловит недопустимый переход и цвет субтитров', () => {
     const bad1 = request();
     bad1.plan.clips[0].transition = 'zoom';
-    expectApiError('PLAN_INVALID', () => validateRenderRequest(bad1));
+    expectApiError('PLAN_INVALID', () => validateRenderRequest(bad1, UID));
 
     const bad2 = request();
     bad2.plan.captions.colorHex = 'white';
-    expectApiError('PLAN_INVALID', () => validateRenderRequest(bad2));
+    expectApiError('PLAN_INVALID', () => validateRenderRequest(bad2, UID));
   });
 
   it('ловит дублирующиеся идентификаторы', () => {
     const body = request();
     body.plan.clips[1].id = 'clip_1';
-    expectApiError('PLAN_INVALID', () => validateRenderRequest(body));
+    expectApiError('PLAN_INVALID', () => validateRenderRequest(body, UID));
   });
 
   it('игнорирует косметические поля клипа, но сохраняет их значения', () => {
     const body = request();
     body.plan.clips[0].sourceName = 'IMG_0042.mp4';
     body.plan.clips[0].reason = 'самый динамичный фрагмент';
-    const v = validateRenderRequest(body);
+    const v = validateRenderRequest(body, UID);
     assert.equal(v.plan.clips[0].sourceName, 'IMG_0042.mp4');
     assert.equal(v.plan.clips[0].reason, 'самый динамичный фрагмент');
   });
@@ -149,32 +153,38 @@ describe('валидация RenderRequest', () => {
 
 describe('пути Cloud Storage', () => {
   it('строит пути по контракту §6', () => {
-    assert.equal(planPath('p1', 'j1'), 'projects/p1/jobs/j1/plan.json');
-    assert.equal(outputVideoPath('p1', 'j1', 1920), 'projects/p1/jobs/j1/output/reel_1920p.mp4');
+    assert.equal(planPath(UID, 'p1', 'j1'), `users/${UID}/projects/p1/jobs/j1/plan.json`);
+    assert.equal(
+      outputVideoPath(UID, 'p1', 'j1', 1920),
+      `users/${UID}/projects/p1/jobs/j1/output/reel_1920p.mp4`,
+    );
   });
 
   it('блокирует traversal, чужие проекты и абсолютные пути', () => {
+    const prefix = `users/${UID}/projects/${PROJECT}/`;
     const cases = [
-      `projects/${PROJECT}/../other/x.mp4`,
-      'projects/other_project/sources/x.mp4',
-      `/projects/${PROJECT}/sources/x.mp4`,
-      `gs://bucket/projects/${PROJECT}/sources/x.mp4`,
-      `projects/${PROJECT}//sources/x.mp4`,
+      `${prefix}../other/x.mp4`,
+      `users/${UID}/projects/other_project/sources/x.mp4`,
+      'users/otheruser/projects/proj_test/sources/x.mp4',
+      `/${prefix}sources/x.mp4`,
+      `gs://bucket/${prefix}sources/x.mp4`,
+      `users/${UID}/projects/${PROJECT}//sources/x.mp4`,
     ];
     for (const p of cases) {
-      expectApiError('INVALID_OBJECT_PATH', () => assertObjectPath(p, PROJECT, 'assets[0].objectPath'));
+      expectApiError('INVALID_OBJECT_PATH', () => assertObjectPath(p, prefix, 'assets[0].objectPath'));
     }
   });
 
   it('пропускает валидный путь с дефисом и точкой', () => {
-    const p = `projects/${PROJECT}/sources/my-asset.v2.mp4`;
-    assert.equal(assertObjectPath(p, PROJECT, 'f'), p);
+    const prefix = `users/${UID}/projects/${PROJECT}/`;
+    const p = `${prefix}sources/my-asset.v2.mp4`;
+    assert.equal(assertObjectPath(p, prefix, 'f'), p);
   });
 
   it('отклоняет чужой objectPath внутри RenderRequest', () => {
     const body = request();
-    body.assets[0].objectPath = 'projects/someone_else/sources/a.mp4';
-    expectApiError('INVALID_OBJECT_PATH', () => validateRenderRequest(body));
+    body.assets[0].objectPath = 'users/someone_else/projects/p/sources/a.mp4';
+    expectApiError('INVALID_OBJECT_PATH', () => validateRenderRequest(body, UID));
   });
 });
 
@@ -272,12 +282,12 @@ describe('идемпотентность', () => {
   });
 
   it('косметические поля клипа не влияют на отпечаток', () => {
-    const base = validateRenderRequest(request());
+    const base = validateRenderRequest(request(), UID);
     const withCosmetics = request();
     withCosmetics.plan.clips[0].sourceName = 'другое имя';
     withCosmetics.plan.clips[0].reason = 'другая причина';
     withCosmetics.plan.clips[0].filePath = '/tmp/x.mp4';
-    const other = validateRenderRequest(withCosmetics);
+    const other = validateRenderRequest(withCosmetics, UID);
 
     assert.equal(
       buildFingerprint({ ...base }).fingerprint,
@@ -286,17 +296,17 @@ describe('идемпотентность', () => {
   });
 
   it('изменение обрезки меняет отпечаток', () => {
-    const base = validateRenderRequest(request());
+    const base = validateRenderRequest(request(), UID);
     const changed = request();
     changed.plan.clips[0].end = 5;
     changed.plan.clips[0].duration = 3;
-    const other = validateRenderRequest(changed);
+    const other = validateRenderRequest(changed, UID);
     assert.notEqual(buildFingerprint({ ...base }).fingerprint, buildFingerprint({ ...other }).fingerprint);
   });
 
   it('разные проекты не сталкиваются при одном ключе', () => {
-    const a = validateRenderRequest(request());
-    const b = validateRenderRequest(request({ projectId: 'proj_other' }));
+    const a = validateRenderRequest(request(), UID);
+    const b = validateRenderRequest(request({ projectId: 'proj_other' }), UID);
     assert.notEqual(
       buildFingerprint({ ...a, idempotencyKey: 'k' }).fingerprint,
       buildFingerprint({ ...b, idempotencyKey: 'k' }).fingerprint,

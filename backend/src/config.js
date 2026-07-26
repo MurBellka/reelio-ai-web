@@ -33,6 +33,39 @@ export const config = {
     poll: int('RATE_LIMIT_POLL', 240),
   },
 
+  // Firebase: projectId — публичное значение, секретов здесь нет.
+  firebase: {
+    projectId: process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || '',
+  },
+
+  auth: {
+    // Обход только для локальной разработки. В облаке переменная не задаётся.
+    disabled: process.env.AUTH_DISABLED === 'true',
+    devUid: process.env.AUTH_DEV_UID || 'devuser',
+  },
+
+  appCheck: {
+    // off | monitor | enforce. Выкат обязан идти через monitor (§13).
+    mode: process.env.APP_CHECK_MODE || 'off',
+  },
+
+  // Лимиты публичной беты. Все настраиваются через окружение.
+  limits: {
+    userDailyCredits: int('LIMIT_USER_DAILY_CREDITS', 4),
+    globalDailyCredits: int('LIMIT_GLOBAL_DAILY_CREDITS', 40),
+    ipDailyCredits: int('LIMIT_IP_DAILY_CREDITS', 8),
+    maxActiveJobsPerUser: int('LIMIT_ACTIVE_JOBS_USER', 1),
+    maxActiveJobsGlobal: int('LIMIT_ACTIVE_JOBS_GLOBAL', 3),
+    editPlanDaily: int('LIMIT_EDIT_PLAN_DAILY', 10),
+
+    maxVideos: int('LIMIT_MAX_VIDEOS', 20),
+    maxPhotos: int('LIMIT_MAX_PHOTOS', 20),
+    maxSingleVideoSeconds: int('LIMIT_SINGLE_VIDEO_SECONDS', 600),
+    maxProjectVideoSeconds: int('LIMIT_PROJECT_VIDEO_SECONDS', 3600),
+    maxProjectBytes: int('LIMIT_PROJECT_BYTES', 2 * 1024 * 1024 * 1024),
+    maxOutputSeconds: int('LIMIT_OUTPUT_SECONDS', 120),
+  },
+
   allowedOrigins: new Set(
     [
       process.env.ALLOWED_ORIGIN || 'https://murbellka.github.io',
@@ -49,7 +82,9 @@ export const config = {
     firestoreDatabase: process.env.FIRESTORE_DATABASE || '(default)',
     jobName,
     jobRegion: process.env.RENDER_JOB_REGION || 'europe-west1',
-    signedUrlTtlSeconds: int('SIGNED_URL_TTL_SECONDS', 3600),
+    // Signed URL живёт не больше 15 минут (§12): ссылка на запись — это
+    // право положить файл в наш бакет, её срок должен быть коротким.
+    signedUrlTtlSeconds: int('SIGNED_URL_TTL_SECONDS', 900),
     jobTtlDays: int('JOB_TTL_DAYS', 7),
     heartbeatTimeoutMs: int('WORKER_HEARTBEAT_TIMEOUT_SECONDS', 600) * 1000,
     localRoot: process.env.LOCAL_RENDER_ROOT || '.render-local',

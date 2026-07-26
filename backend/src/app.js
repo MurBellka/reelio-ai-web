@@ -6,7 +6,9 @@ import cors from 'cors';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 
+import { createVerifier } from './auth.js';
 import { config as defaultConfig, healthSnapshot } from './config.js';
+import { appCheckGuard, requireAuth } from './auth.js';
 import { requestEditPlan } from './edit-plan.js';
 import { ApiError, errorHandler } from './errors.js';
 import { RenderJobService } from './jobs.js';
@@ -14,14 +16,20 @@ import { createRenderRoutes, rateLimitHandler } from './routes.js';
 import { createRunner } from './runner.js';
 import { createStorage } from './storage.js';
 import { createStore } from './store.js';
+import { QuotaStore, buildQuotaOps } from './quota.js';
 
 export async function createApp(config = defaultConfig) {
-  const [store, storage, runner] = await Promise.all([
+  const [store, storage, runner, verifier] = await Promise.all([
     createStore(config),
     createStorage(config),
     createRunner(config),
+    createVerifier(config),
   ]);
-  const service = new RenderJobService({ config, store, storage, runner });
+
+  // Счётчики квот живут в том же хранилище, что и задачи: списание кредита и
+  // проверка активных задач обязаны быть в одной транзакции.
+  const quota = buildQuotaOps({ limits: config.limits, store: new QuotaStore(store) });
+  const service = new RenderJobService({ config, store, storage, runner, quota });
 
   const app = express();
   app.disable('x-powered-by');
@@ -43,8 +51,15 @@ export async function createApp(config = defaultConfig) {
     },
     // PUT — только для локального приёмника загрузок (§10). В облаке байты
     // идут прямо в бакет, и CORS там настраивается на самом бакете.
-    methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Idempotency-Key', 'X-Reelio-Client', 'If-None-Match'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Firebase-AppCheck',
+      'Idempotency-Key',
+      'X-Reelio-Client',
+      'If-None-Match',
+    ],
     exposedHeaders: ['ETag'],
   };
   app.use((req, res, next) => {
@@ -55,8 +70,12 @@ export async function createApp(config = defaultConfig) {
   app.get('/', (_req, res) => res.json(healthSnapshot(config)));
   app.get('/health', (_req, res) => res.json(healthSnapshot(config)));
 
+  // /edit-plan тоже стоит денег — за авторизацией и под суточной квотой.
+  const editPlanGuard = [appCheckGuard({ verifier, config }), requireAuth({ verifier, config })];
+
   app.post(
     '/edit-plan',
+    editPlanGuard,
     rateLimit({
       windowMs: 60_000,
       max: config.rateLimits.editPlan,
@@ -64,13 +83,15 @@ export async function createApp(config = defaultConfig) {
       handler: rateLimitHandler,
     }),
     (req, res, next) => {
-      requestEditPlan(config, req.body || {})
+      quota
+        .consumeEditPlan(req.auth.uid, req.ip)
+        .then(() => requestEditPlan(config, req.body || {}))
         .then((plan) => res.json({ plan }))
         .catch(next);
     },
   );
 
-  app.use(createRenderRoutes({ service, config, storage }));
+  app.use(createRenderRoutes({ service, config, storage, verifier, quota }));
 
   // Неизвестный маршрут. Отдельного кода в контракте v1 нет, а JOB_NOT_FOUND
   // здесь вводил бы клиента в заблуждение — используем INVALID_REQUEST с 404.
@@ -86,6 +107,8 @@ export async function createApp(config = defaultConfig) {
   app.use(errorHandler);
 
   app.locals.service = service;
+  app.locals.quota = quota;
+  app.locals.verifier = verifier;
   app.locals.storage = storage;
   app.locals.store = store;
   app.locals.runner = runner;

@@ -213,32 +213,46 @@ export function resolveExport({ choice, fps = 30, assets = [], durationSeconds =
 
 // ── Пути Cloud Storage (§6) ───────────────────────────────────────────────
 
-export function sourcesPrefix(projectId) {
-  return `projects/${projectId}/sources/`;
+/**
+ * Корень данных пользователя. uid берётся ИСКЛЮЧИТЕЛЬНО из проверенного
+ * Firebase-токена: клиент не может ни подставить чужой, ни повлиять на путь.
+ * Именно это делает изоляцию пользователей свойством схемы хранения, а не
+ * следствием проверок в коде.
+ */
+export function userPrefix(ownerUid) {
+  return `users/${ownerUid}/`;
 }
 
-export function jobPrefix(projectId, jobId) {
-  return `projects/${projectId}/jobs/${jobId}/`;
+export function projectPrefix(ownerUid, projectId) {
+  return `${userPrefix(ownerUid)}projects/${projectId}/`;
 }
 
-export function planPath(projectId, jobId) {
-  return `${jobPrefix(projectId, jobId)}plan.json`;
+export function sourcesPrefix(ownerUid, projectId) {
+  return `${projectPrefix(ownerUid, projectId)}sources/`;
 }
 
-export function outputPrefix(projectId, jobId) {
-  return `${jobPrefix(projectId, jobId)}output`;
+export function jobPrefix(ownerUid, projectId, jobId) {
+  return `${projectPrefix(ownerUid, projectId)}jobs/${jobId}/`;
 }
 
-export function outputVideoPath(projectId, jobId, height) {
-  return `${outputPrefix(projectId, jobId)}/reel_${height}p.mp4`;
+export function planPath(ownerUid, projectId, jobId) {
+  return `${jobPrefix(ownerUid, projectId, jobId)}plan.json`;
 }
 
-export function thumbnailPath(projectId, jobId) {
-  return `${outputPrefix(projectId, jobId)}/thumbnail.jpg`;
+export function outputPrefix(ownerUid, projectId, jobId) {
+  return `${jobPrefix(ownerUid, projectId, jobId)}output`;
 }
 
-/** Защита от path traversal и чужих префиксов (§6). */
-export function assertObjectPath(objectPath, projectId, field) {
+export function outputVideoPath(ownerUid, projectId, jobId, height) {
+  return `${outputPrefix(ownerUid, projectId, jobId)}/reel_${height}p.mp4`;
+}
+
+export function thumbnailPath(ownerUid, projectId, jobId) {
+  return `${outputPrefix(ownerUid, projectId, jobId)}/thumbnail.jpg`;
+}
+
+/** Защита от path traversal и выхода за пределы своего каталога (§6). */
+export function assertObjectPath(objectPath, expectedPrefix, field) {
   if (typeof objectPath !== 'string' || objectPath.length === 0 || objectPath.length > 1024) {
     bad('INVALID_OBJECT_PATH', 'Путь объекта пуст или слишком длинный.', field);
   }
@@ -251,7 +265,7 @@ export function assertObjectPath(objectPath, projectId, field) {
   if (objectPath.includes('..') || objectPath.includes('//')) {
     bad('INVALID_OBJECT_PATH', 'Путь объекта содержит недопустимые сегменты.', field);
   }
-  if (!objectPath.startsWith(`projects/${projectId}/`)) {
+  if (!expectedPrefix || !objectPath.startsWith(expectedPrefix)) {
     bad('INVALID_OBJECT_PATH', 'Путь объекта вне каталога проекта.', field);
   }
   return objectPath;
@@ -259,7 +273,7 @@ export function assertObjectPath(objectPath, projectId, field) {
 
 // ── Валидация RenderRequest (§2, §3) ──────────────────────────────────────
 
-function validateAssets(rawAssets, projectId) {
+function validateAssets(rawAssets, ownerUid, projectId) {
   if (!Array.isArray(rawAssets) || rawAssets.length === 0) {
     bad('INVALID_REQUEST', 'Нужен непустой список материалов «assets».', 'assets');
   }
@@ -281,7 +295,11 @@ function validateAssets(rawAssets, projectId) {
     if (!MEDIA_TYPES.has(type)) {
       bad('INVALID_REQUEST', 'Тип материала должен быть video или photo.', `${field}.type`);
     }
-    const objectPath = assertObjectPath(raw.objectPath, projectId, `${field}.objectPath`);
+    const objectPath = assertObjectPath(
+      raw.objectPath,
+      projectPrefix(ownerUid, projectId),
+      `${field}.objectPath`,
+    );
     const asset = {
       id,
       type,
@@ -445,7 +463,7 @@ function validatePlan(rawPlan, assetsById) {
  * Полная валидация и нормализация RenderRequest.
  * Возвращает данные, готовые к записи в Firestore и в plan.json.
  */
-export function validateRenderRequest(body) {
+export function validateRenderRequest(body, ownerUid) {
   requireObject(body, 'body');
 
   const version = body.contractVersion ?? CONTRACT_VERSION;
@@ -457,12 +475,18 @@ export function validateRenderRequest(body) {
     );
   }
 
+  if (typeof ownerUid !== 'string' || !ownerUid) {
+    // Страховка от программной ошибки: путь без проверенного uid означал бы
+    // потерю изоляции между пользователями.
+    throw new ApiError('UNAUTHENTICATED', 'Запрос без подтверждённого владельца.');
+  }
+
   const projectId = body.projectId;
   if (typeof projectId !== 'string' || !ID_RE.test(projectId)) {
     bad('INVALID_REQUEST', 'Идентификатор проекта должен быть [A-Za-z0-9_-]{1,64}.', 'projectId');
   }
 
-  const { assets, byId } = validateAssets(body.assets, projectId);
+  const { assets, byId } = validateAssets(body.assets, ownerUid, projectId);
   const { plan, totalDuration } = validatePlan(body.plan, byId);
 
   // export из запроса перекрывает plan.export (§3).
@@ -482,7 +506,7 @@ export function validateRenderRequest(body) {
  * Валидация `POST /uploads` (§8.2): выдача разрешений на прямую загрузку
  * исходников в бакет. Байты идут клиент → хранилище, минуя backend.
  */
-export function validateUploadRequest(body) {
+export function validateUploadRequest(body, ownerUid) {
   requireObject(body, 'body');
 
   const version = body.contractVersion ?? CONTRACT_VERSION;
@@ -492,6 +516,12 @@ export function validateUploadRequest(body) {
       `Поддерживается только версия контракта ${CONTRACT_VERSION}.`,
       { field: 'contractVersion' },
     );
+  }
+
+  if (typeof ownerUid !== 'string' || !ownerUid) {
+    // Страховка от программной ошибки: путь без проверенного uid означал бы
+    // потерю изоляции между пользователями.
+    throw new ApiError('UNAUTHENTICATED', 'Запрос без подтверждённого владельца.');
   }
 
   const projectId = body.projectId;
@@ -531,8 +561,12 @@ export function validateUploadRequest(body) {
 
     // Загружать можно только в sources/ своего проекта — не в output чужой
     // задачи и не поверх готового результата.
-    const objectPath = assertObjectPath(raw.objectPath, projectId, `${field}.objectPath`);
-    if (!objectPath.startsWith(sourcesPrefix(projectId))) {
+    const objectPath = assertObjectPath(
+      raw.objectPath,
+      projectPrefix(ownerUid, projectId),
+      `${field}.objectPath`,
+    );
+    if (!objectPath.startsWith(sourcesPrefix(ownerUid, projectId))) {
       bad(
         'INVALID_OBJECT_PATH',
         'Исходники загружаются только в каталог sources проекта.',

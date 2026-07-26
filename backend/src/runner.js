@@ -14,6 +14,9 @@ function envOverrides({ job, planUri, bucket, progressUrl, workerToken }) {
     { name: 'REELIO_BUCKET', value: bucket },
     { name: 'REELIO_PLAN_URI', value: planUri },
     { name: 'REELIO_OUTPUT_PREFIX', value: job.outputPrefix },
+    // Схему путей знает только backend — в ней зашит проверенный uid владельца.
+    { name: 'REELIO_PROJECT_PREFIX', value: job.projectPrefix || '' },
+    { name: 'REELIO_JOB_PREFIX', value: job.jobPrefix || '' },
     { name: 'REELIO_PROGRESS_URL', value: progressUrl },
     { name: 'REELIO_WORKER_TOKEN', value: workerToken },
     { name: 'REELIO_CONTRACT_VERSION', value: '1' },

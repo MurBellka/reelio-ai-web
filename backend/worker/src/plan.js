@@ -40,7 +40,7 @@ function asObject(value, field) {
   return value;
 }
 
-function parseAssets(rawAssets, projectId) {
+function parseAssets(rawAssets, projectPrefix) {
   if (!Array.isArray(rawAssets) || rawAssets.length === 0) {
     fail('PLAN_INVALID', 'В плане нет списка исходных материалов.', 'assets');
   }
@@ -63,7 +63,7 @@ function parseAssets(rawAssets, projectId) {
       fail('PLAN_INVALID', 'Тип материала должен быть video или photo.', `${field}.type`);
     }
 
-    const pathError = checkObjectPath(raw.objectPath, projectId);
+    const pathError = checkObjectPath(raw.objectPath, projectPrefix);
     if (pathError) fail('INVALID_OBJECT_PATH', pathError, `${field}.objectPath`);
 
     byId.set(raw.id, {
@@ -256,7 +256,8 @@ export function parseRenderPlan(document, ctx) {
     );
   }
 
-  // projectId из окружения — источник истины: именно он ограничивает пути (§6).
+  // Префикс из окружения — источник истины: именно он ограничивает пути (§6),
+  // и в нём зашит проверенный uid владельца.
   const projectId = ctx.projectId;
   if (doc.projectId && doc.projectId !== projectId) {
     fail('PLAN_INVALID', 'План принадлежит другому проекту.', 'projectId', 'projectId mismatch');
@@ -273,7 +274,10 @@ export function parseRenderPlan(document, ctx) {
     fail('PLAN_INVALID', `Неизвестный стиль монтажа «${style}».`, 'plan.style');
   }
 
-  const assetsById = parseAssets(doc.assets ?? editPlan.assets, projectId);
+  // Fallback на старую схему — тот же, что в env.js: контекст без префикса
+  // означает докварцевую схему projects/{projectId}/.
+  const projectPrefix = ctx.projectPrefix || `projects/${projectId}/`;
+  const assetsById = parseAssets(doc.assets ?? editPlan.assets, projectPrefix);
   const { clips, totalDuration } = parseClips(editPlan.clips, assetsById);
   const exportSettings = parseExport(doc.export ?? editPlan.export);
 

@@ -6,6 +6,7 @@ import express, { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 
 import { CONTRACT_VERSION, MAX_UPLOAD_BYTES, validateUploadRequest } from './contract.js';
+import { appCheckGuard, requireAuth } from './auth.js';
 import { ApiError } from './errors.js';
 import { toPublicJob } from './jobs.js';
 import { LocalStorage } from './storage.js';
@@ -45,8 +46,16 @@ export function rateLimitHandler(req, res, next) {
   next(new ApiError('RATE_LIMITED', 'Слишком много запросов. Повторите через минуту.'));
 }
 
-export function createRenderRoutes({ service, config, storage }) {
+export function createRenderRoutes({ service, config, storage, verifier, quota }) {
   const router = Router();
+
+  // Два независимых барьера: «кто это» и «наше ли это приложение» (§10, §13).
+  const auth = requireAuth({ verifier, config });
+  const appCheck = appCheckGuard({ verifier, config });
+  const guard = [appCheck, auth];
+
+  const uidOf = (req) => req.auth?.uid || null;
+  const ipOf = (req) => req.ip || null;
 
   const renderLimiter = rateLimit({
     windowMs: 60_000,
@@ -74,9 +83,10 @@ export function createRenderRoutes({ service, config, storage }) {
   // ── POST /uploads — разрешения на прямую загрузку исходников (§8.2) ─────
   router.post(
     '/uploads',
+    guard,
     renderLimiter,
     wrap(async (req, res) => {
-      const { assets } = validateUploadRequest(req.body);
+      const { assets } = validateUploadRequest(req.body, uidOf(req));
       // Байты в backend не попадают: он лишь подписывает ссылки в бакет.
       const uploads = await Promise.all(
         assets.map(async (asset) => {
@@ -101,6 +111,7 @@ export function createRenderRoutes({ service, config, storage }) {
   // ── POST /render ────────────────────────────────────────────────────────
   router.post(
     '/render',
+    guard,
     renderLimiter,
     wrap(async (req, res) => {
       const header = req.get('Idempotency-Key');
@@ -116,6 +127,8 @@ export function createRenderRoutes({ service, config, storage }) {
 
       const { job, created } = await service.createJob(req.body, {
         idempotencyKey: header || bodyKey || '',
+        ownerUid: uidOf(req),
+        ip: ipOf(req),
       });
       res.status(created ? 202 : 200).json(toPublicJob(job));
     }),
@@ -124,9 +137,10 @@ export function createRenderRoutes({ service, config, storage }) {
   // ── GET /jobs/{id} ──────────────────────────────────────────────────────
   router.get(
     '/jobs/:id',
+    guard,
     pollLimiter,
     wrap(async (req, res) => {
-      const job = await service.getJob(jobIdOf(req));
+      const job = await service.getJob(jobIdOf(req), uidOf(req));
       const body = toPublicJob(job);
 
       // Дешёвый поллинг: ETag меняется только при реальном изменении задачи.
@@ -141,9 +155,10 @@ export function createRenderRoutes({ service, config, storage }) {
   // ── POST /jobs/{id}/cancel ──────────────────────────────────────────────
   router.post(
     '/jobs/:id/cancel',
+    guard,
     cancelLimiter,
     wrap(async (req, res) => {
-      const job = await service.cancelJob(jobIdOf(req));
+      const job = await service.cancelJob(jobIdOf(req), uidOf(req));
       res.json(toPublicJob(job));
     }),
   );
@@ -151,13 +166,14 @@ export function createRenderRoutes({ service, config, storage }) {
   // ── GET /download?jobId=… ───────────────────────────────────────────────
   router.get(
     '/download',
+    guard,
     pollLimiter,
     wrap(async (req, res) => {
       const jobId = String(req.query.jobId || '');
       if (!JOB_ID_RE.test(jobId)) {
         throw new ApiError('INVALID_REQUEST', 'Не указан корректный jobId.', { field: 'jobId' });
       }
-      const info = await service.downloadInfo(jobId);
+      const info = await service.downloadInfo(jobId, uidOf(req));
       res.set('Cache-Control', 'no-store');
       if (String(req.query.redirect) === '1') return res.redirect(302, info.downloadUrl);
       return res.json(info);
@@ -202,6 +218,68 @@ export function createRenderRoutes({ service, config, storage }) {
       }),
     );
   }
+
+  // ── GET /me — профиль и остаток кредитов ────────────────────────────────
+  router.get(
+    '/me',
+    guard,
+    pollLimiter,
+    wrap(async (req, res) => {
+      const usage = quota ? await quota.usageOf(uidOf(req)) : null;
+      res.set('Cache-Control', 'no-store');
+      res.json({
+        uid: req.auth.uid,
+        email: req.auth.email,
+        emailVerified: req.auth.emailVerified,
+        limits: {
+          maxVideos: config.limits.maxVideos,
+          maxPhotos: config.limits.maxPhotos,
+          maxSingleVideoSeconds: config.limits.maxSingleVideoSeconds,
+          maxProjectVideoSeconds: config.limits.maxProjectVideoSeconds,
+          maxProjectBytes: config.limits.maxProjectBytes,
+          maxOutputSeconds: config.limits.maxOutputSeconds,
+          retentionDays: config.render.jobTtlDays,
+        },
+        usage,
+      });
+    }),
+  );
+
+  // ── DELETE /projects/{id} — проект со всеми исходниками и результатами ──
+  router.delete(
+    '/projects/:id',
+    guard,
+    renderLimiter,
+    wrap(async (req, res) => {
+      const projectId = req.params.id;
+      if (!JOB_ID_RE.test(projectId)) {
+        throw new ApiError('INVALID_REQUEST', 'Некорректный идентификатор проекта.', {
+          field: 'projectId',
+        });
+      }
+      const summary = await service.deleteProject(uidOf(req), projectId);
+      res.set('Cache-Control', 'no-store');
+      res.json({ deleted: true, projectId, ...summary });
+    }),
+  );
+
+  // ── DELETE /account — аккаунт и все пользовательские данные ─────────────
+  router.delete(
+    '/account',
+    guard,
+    renderLimiter,
+    wrap(async (req, res) => {
+      const uid = uidOf(req);
+      const summary = await service.deleteAccountData(uid);
+      let quotaDocs = 0;
+      if (quota) quotaDocs = await quota.purgeUser(uid);
+      // Учётная запись удаляется последней: если что-то упадёт раньше, у
+      // пользователя останется доступ, чтобы повторить удаление.
+      if (verifier?.deleteUser) await verifier.deleteUser(uid);
+      res.set('Cache-Control', 'no-store');
+      res.json({ deleted: true, ...summary, quotaDocs });
+    }),
+  );
 
   // ── POST /internal/jobs/{id}/progress — только worker (§8.1) ────────────
   router.post(

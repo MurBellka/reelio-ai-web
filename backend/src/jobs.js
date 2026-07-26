@@ -11,14 +11,18 @@ import {
   buildFingerprint,
   canTransition,
   newId,
+  jobPrefix,
   outputPrefix,
   outputVideoPath,
   planPath,
   progressFor,
+  projectPrefix,
   thumbnailPath,
+  userPrefix,
   validateRenderRequest,
 } from './contract.js';
 import { ApiError, jobError } from './errors.js';
+import { creditCostFor } from './quota.js';
 
 const MESSAGES = {
   queued: 'Задача в очереди',
@@ -40,6 +44,11 @@ const INTERNAL_FIELDS = new Set([
   'contentHash',
   'planObjectPath',
   'outputPrefix',
+  'projectPrefix',
+  'jobPrefix',
+  'ownerUid',
+  'charge',
+  'ip',
   'plan',
   'assets',
 ]);
@@ -54,11 +63,12 @@ export function toPublicJob(job) {
 }
 
 export class RenderJobService {
-  constructor({ config, store, storage, runner }) {
+  constructor({ config, store, storage, runner, quota = null }) {
     this.config = config;
     this.store = store;
     this.storage = storage;
     this.runner = runner;
+    this.quota = quota;
   }
 
   #now() {
@@ -81,9 +91,17 @@ export class RenderJobService {
    * POST /render. Возвращает { job, created } — created=false означает
    * идемпотентный дубликат (§5), HTTP 200 вместо 202.
    */
-  async createJob(body, { idempotencyKey } = {}) {
-    const validated = validateRenderRequest(body);
-    const { fingerprint, contentHash } = buildFingerprint({ ...validated, idempotencyKey });
+  async createJob(body, { idempotencyKey, ownerUid, ip } = {}) {
+    const validated = validateRenderRequest(body, ownerUid);
+    validated.ownerUid = ownerUid;
+    validated.ip = ip || null;
+    // Владелец входит в отпечаток: одинаковые планы разных пользователей —
+    // это разные задачи, а не дубликат.
+    const { fingerprint, contentHash } = buildFingerprint({
+      ...validated,
+      projectId: `${ownerUid}/${validated.projectId}`,
+      idempotencyKey,
+    });
 
     const jobId = newId('job');
     const reservation = await this.store.reserveFingerprint(fingerprint, {
@@ -142,13 +160,25 @@ export class RenderJobService {
   }
 
   async #spawnJob(validated, { jobId, fingerprint, contentHash, attempt }) {
-    const { projectId, plan, assets, export: exp } = validated;
+    const { projectId, plan, assets, export: exp, ownerUid, ip } = validated;
 
-    const active = await this.store.countActiveJobs(projectId);
-    if (active >= MAX_ACTIVE_JOBS_PER_PROJECT) {
-      throw new ApiError(
-        'TOO_MANY_ACTIVE_JOBS',
-        `В проекте уже ${active} активных задач рендера. Дождитесь завершения или отмените одну.`,
+    const [activeUser, activeGlobal] = await Promise.all([
+      this.store.countActiveJobs(ownerUid),
+      this.store.countActiveJobsGlobal(),
+    ]);
+
+    // Квота и кредиты списываются здесь, до запуска платной работы. Списание
+    // атомарно, поэтому параллельные запросы не проскочат мимо лимита.
+    let charge = null;
+    if (this.quota) {
+      charge = await this.store.runTransaction((tx) =>
+        this.quota.reserveRender(tx, {
+          uid: ownerUid,
+          ip,
+          cost: creditCostFor(exp.resolution),
+          activeUser,
+          activeGlobal,
+        }),
       );
     }
 
@@ -176,8 +206,13 @@ export class RenderJobService {
       fingerprint,
       contentHash,
       executionName: null,
-      planObjectPath: planPath(projectId, jobId),
-      outputPrefix: outputPrefix(projectId, jobId),
+      ownerUid,
+      charge,
+      ip,
+      planObjectPath: planPath(ownerUid, projectId, jobId),
+      outputPrefix: outputPrefix(ownerUid, projectId, jobId),
+      projectPrefix: projectPrefix(ownerUid, projectId),
+      jobPrefix: jobPrefix(ownerUid, projectId, jobId),
     };
 
     await this.store.createJob(job);
@@ -194,8 +229,8 @@ export class RenderJobService {
         export: exp,
         output: {
           prefix: job.outputPrefix,
-          videoObjectPath: outputVideoPath(projectId, jobId, exp.height),
-          thumbnailObjectPath: thumbnailPath(projectId, jobId),
+          videoObjectPath: outputVideoPath(ownerUid, projectId, jobId, exp.height),
+          thumbnailObjectPath: thumbnailPath(ownerUid, projectId, jobId),
         },
         createdAt,
       },
@@ -245,9 +280,20 @@ export class RenderJobService {
 
   // ── Чтение состояния ────────────────────────────────────────────────────
 
-  async getJob(jobId) {
-    const job = await this.store.getJob(jobId);
-    if (!job) throw new ApiError('JOB_NOT_FOUND', 'Задача рендера не найдена.', { jobId });
+  /**
+   * Чужая задача обязана быть НЕОТЛИЧИМА от несуществующей: одинаковый код,
+   * одинаковый текст. Иначе перебором jobId можно выяснить, какие задачи
+   * существуют у других пользователей.
+   */
+  #assertOwner(job, ownerUid, jobId) {
+    if (!job || (ownerUid && job.ownerUid && job.ownerUid !== ownerUid)) {
+      throw new ApiError('JOB_NOT_FOUND', 'Задача рендера не найдена.', { jobId });
+    }
+    return job;
+  }
+
+  async getJob(jobId, ownerUid) {
+    const job = this.#assertOwner(await this.store.getJob(jobId), ownerUid, jobId);
     return this.#withFreshResult(await this.#failIfStale(job));
   }
 
@@ -308,9 +354,8 @@ export class RenderJobService {
 
   // ── Отмена ──────────────────────────────────────────────────────────────
 
-  async cancelJob(jobId) {
-    const existing = await this.store.getJob(jobId);
-    if (!existing) throw new ApiError('JOB_NOT_FOUND', 'Задача рендера не найдена.', { jobId });
+  async cancelJob(jobId, ownerUid) {
+    const existing = this.#assertOwner(await this.store.getJob(jobId), ownerUid, jobId);
 
     // Повторная отмена идемпотентна, отмена завершённой — конфликт (§8).
     if (existing.status === 'cancelled') return existing;
@@ -324,6 +369,17 @@ export class RenderJobService {
 
     const stopped = await this.runner.cancel(existing.executionName);
     const now = this.#now();
+
+    // Отменённая работа не должна стоить кредита: пользователь сам её прекратил.
+    if (this.quota && existing.charge) {
+      try {
+        await this.quota.refundRender(existing.charge);
+      } catch {
+        // Возврат — не повод провалить отмену. Хуже не вернуть кредит, чем
+        // оставить пользователя с неостановленным платным рендером.
+        console.warn(`[job ${jobId}] credit refund failed`);
+      }
+    }
 
     // queued (worker ещё не стартовал) или execution снят — закрываем сразу.
     // Иначе оставляем флаг: worker увидит его в ответе на heartbeat (§8.1).
@@ -347,8 +403,8 @@ export class RenderJobService {
 
   // ── Скачивание ──────────────────────────────────────────────────────────
 
-  async downloadInfo(jobId) {
-    const job = await this.getJob(jobId);
+  async downloadInfo(jobId, ownerUid) {
+    const job = await this.getJob(jobId, ownerUid);
 
     if (job.status !== 'succeeded' || !job.result?.objectPath) {
       throw new ApiError(
@@ -373,6 +429,53 @@ export class RenderJobService {
       fileName,
       jobId,
     };
+  }
+
+  // ── Удаление данных пользователя ────────────────────────────────────────
+
+  /**
+   * Удаляет проект целиком: исходники, планы, результаты и записи задач.
+   *
+   * Активные задачи сначала отменяются — иначе worker продолжит писать в
+   * каталог, который мы только что вычистили, и оставит мусор.
+   */
+  async deleteProject(ownerUid, projectId) {
+    const jobs = await this.store.listJobsByOwner(ownerUid, projectId);
+
+    for (const job of jobs) {
+      if (!TERMINAL_STATUSES.has(job.status)) {
+        try {
+          await this.cancelJob(job.jobId, ownerUid);
+        } catch {
+          // Гонка со штатным завершением — не повод прерывать удаление.
+        }
+      }
+    }
+
+    const objects = await this.storage.deletePrefix(projectPrefix(ownerUid, projectId));
+    await Promise.all(jobs.map((j) => this.store.deleteJob(j.jobId)));
+
+    return { jobs: jobs.length, objects };
+  }
+
+  /** Удаляет все данные пользователя (перед удалением учётной записи). */
+  async deleteAccountData(ownerUid) {
+    const jobs = await this.store.listJobsByOwner(ownerUid);
+
+    for (const job of jobs) {
+      if (!TERMINAL_STATUSES.has(job.status)) {
+        try {
+          await this.cancelJob(job.jobId, ownerUid);
+        } catch {
+          /* см. выше */
+        }
+      }
+    }
+
+    const objects = await this.storage.deletePrefix(userPrefix(ownerUid));
+    await Promise.all(jobs.map((j) => this.store.deleteJob(j.jobId)));
+
+    return { jobs: jobs.length, objects };
   }
 
   // ── Прогресс от worker'а (§8.1) ─────────────────────────────────────────
@@ -450,7 +553,8 @@ export class RenderJobService {
    * хранилища, а не из отчёта.
    */
   async #normalizeResult(job, raw) {
-    const objectPath = raw?.objectPath || outputVideoPath(job.projectId, job.jobId, job.export.height);
+    const objectPath =
+      raw?.objectPath || outputVideoPath(job.ownerUid, job.projectId, job.jobId, job.export.height);
     if (!objectPath.startsWith(job.outputPrefix + '/')) {
       throw new ApiError(
         'INVALID_OBJECT_PATH',
@@ -467,7 +571,8 @@ export class RenderJobService {
 
     const stat = await this.storage.statObject(objectPath);
 
-    let thumbnailObjectPath = raw?.thumbnailObjectPath ?? thumbnailPath(job.projectId, job.jobId);
+    let thumbnailObjectPath =
+      raw?.thumbnailObjectPath ?? thumbnailPath(job.ownerUid, job.projectId, job.jobId);
     if (!thumbnailObjectPath.startsWith(job.outputPrefix + '/') || !(await this.storage.exists(thumbnailObjectPath))) {
       thumbnailObjectPath = null;
     }

@@ -63,7 +63,7 @@ export async function runRender({ env, storage, reporter, logger }) {
     }
     // Мусор в бакете от предыдущих попыток — best effort, ошибки не важны.
     await storage
-      .removePrefix(tmpPrefix(env.projectId, env.jobId))
+      .removePrefix(tmpPrefix(env.jobPrefix))
       .catch(() => logger.warn('bucket tmp cleanup skipped'));
   }
 }
@@ -342,7 +342,7 @@ async function renderInside({ env, storage, reporter, logger, workDir, sourcesDi
 export async function uploadWorkerLog({ env, storage, logger }) {
   if (!env.uploadLog) return;
   try {
-    await storage.writeText(logPath(env.projectId, env.jobId), logger.dump(), {
+    await storage.writeText(logPath(env.jobPrefix), logger.dump(), {
       contentType: 'text/plain; charset=utf-8',
     });
   } catch {
