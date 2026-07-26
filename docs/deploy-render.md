@@ -171,12 +171,12 @@ done
 ## Шаг 5. Cloud Run Job (FFmpeg worker)
 
 > Выполняется **после** объединения ветки `worktree-ffmpeg-worker` — нужен
-> `worker/Dockerfile`.
+> `backend/worker/Dockerfile`.
 
 ```bash
 gcloud run jobs deploy reelio-ffmpeg-worker \
   --project "$P" --region europe-west1 \
-  --source worker/ \
+  --source backend/worker/ \
   --service-account "$WORKER_SA" \
   --cpu 4 --memory 8Gi --task-timeout 30m --max-retries 1 \
   --set-secrets REELIO_WORKER_TOKEN=reelio-worker-token:latest

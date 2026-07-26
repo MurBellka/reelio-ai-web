@@ -81,7 +81,7 @@ ok "исходники готовы: $(du -sh "$SRC_DIR" | cut -f1)"
 # ── 2. Backend в local mode ───────────────────────────────────────────────
 WORKER_CMD="${LOCAL_WORKER_CMD:-}"
 if [ -z "$WORKER_CMD" ]; then
-  for candidate in "${REPO_ROOT}/worker/index.js" "${REPO_ROOT}/worker/src/index.js"; do
+  for candidate in "${REPO_ROOT}/backend/worker/src/index.js" "${REPO_ROOT}/worker/src/index.js"; do
     [ -f "$candidate" ] && WORKER_CMD="node ${candidate}" && break
   done
 fi
