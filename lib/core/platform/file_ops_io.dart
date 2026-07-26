@@ -19,3 +19,9 @@ void downloadTextFile(
 }) {
   // no-op: см. share на нативных платформах.
 }
+
+/// На нативных платформах ссылка отдаётся системному меню «Поделиться».
+/// Заглушка нужна для единого API фасада.
+void openDownloadUrl(String url, String filename) {
+  // no-op: см. share на нативных платформах.
+}

@@ -135,6 +135,8 @@ class MockAiEditingService implements AiEditingService {
           end: isVideo ? _pickStart(asset, duration) + duration : null,
           transition: i == 0 ? 'cut' : style.defaultTransition,
           sourceName: asset.name,
+          // Рендер адресует исходники только по mediaId (контракт §2).
+          mediaId: asset.id,
         ),
       );
       used += duration;
