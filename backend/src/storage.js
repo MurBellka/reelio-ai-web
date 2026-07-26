@@ -23,13 +23,27 @@ class GcsStorage {
     return `gs://${this.bucketName}/${objectPath}`;
   }
 
-  async writeJson(objectPath, value, metadata = {}) {
+  async writeJson(objectPath, value, metadata = {}, { customTime } = {}) {
     await this.bucket.file(objectPath).save(JSON.stringify(value, null, 2), {
       contentType: 'application/json; charset=utf-8',
       resumable: false,
-      metadata: { cacheControl: 'private, max-age=0, no-transform', metadata },
+      metadata: {
+        cacheControl: 'private, max-age=0, no-transform',
+        ...(customTime ? { customTime } : {}),
+        metadata,
+      },
     });
     return this.uriFor(objectPath);
+  }
+
+  /**
+   * Проставляет Custom-Time объекта = моменту, после которого его можно
+   * удалять. Lifecycle-правило `daysSinceCustomTime` превращает это в точное
+   * удаление ровно по `expiresAt` задачи (§6), чего age-правило дать не может:
+   * возраст объекта не знает, к какой задаче он относится.
+   */
+  async setCustomTime(objectPath, customTime) {
+    await this.bucket.file(objectPath).setMetadata({ customTime });
   }
 
   async readJson(objectPath) {
@@ -122,6 +136,9 @@ class LocalStorage {
     await writeFile(full, JSON.stringify(value, null, 2), 'utf8');
     return this.uriFor(objectPath);
   }
+
+  /** В local mode срок жизни задаёт сам разработчик — правило не нужно. */
+  async setCustomTime() {}
 
   async readJson(objectPath) {
     return JSON.parse(await readFile(this.pathFor(objectPath), 'utf8'));

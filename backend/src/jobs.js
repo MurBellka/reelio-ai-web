@@ -200,6 +200,8 @@ export class RenderJobService {
         createdAt,
       },
       { jobId, projectId, planId: plan.id, contractVersion: String(CONTRACT_VERSION) },
+      // Снимок плана живёт ровно столько же, сколько результат задачи.
+      { customTime: job.expiresAt },
     );
 
     let executionName = null;
@@ -468,6 +470,18 @@ export class RenderJobService {
     let thumbnailObjectPath = raw?.thumbnailObjectPath ?? thumbnailPath(job.projectId, job.jobId);
     if (!thumbnailObjectPath.startsWith(job.outputPrefix + '/') || !(await this.storage.exists(thumbnailObjectPath))) {
       thumbnailObjectPath = null;
+    }
+
+    // Помечаем артефакты сроком годности задачи: lifecycle удалит их ровно по
+    // expiresAt, а не «когда-нибудь через 30 дней» (§6).
+    for (const path of [objectPath, thumbnailObjectPath]) {
+      if (!path) continue;
+      try {
+        await this.storage.setCustomTime(path, job.expiresAt);
+      } catch {
+        // Не критично: остаётся 30-дневный предохранитель. Задачу не валим.
+        console.warn(`[job ${job.jobId}] custom time not set`);
+      }
     }
 
     return {

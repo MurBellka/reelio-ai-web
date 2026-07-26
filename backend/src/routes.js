@@ -23,10 +23,16 @@ function jobIdOf(req) {
   return id;
 }
 
-/** Постоянное по времени сравнение токена worker'а. */
+/**
+ * Постоянное по времени сравнение токена worker'а.
+ *
+ * Обе стороны обрезаются: секрет из Secret Manager может нести хвостовой \n,
+ * который не выживает в заголовке Authorization. Без этого worker получал бы
+ * 401 на каждый отчёт, а задача навсегда зависала в queued.
+ */
 function tokenMatches(provided, expected) {
-  const a = createHash('sha256').update(provided || '').digest();
-  const b = createHash('sha256').update(expected || '').digest();
+  const a = createHash('sha256').update((provided || '').trim()).digest();
+  const b = createHash('sha256').update((expected || '').trim()).digest();
   return timingSafeEqual(a, b);
 }
 

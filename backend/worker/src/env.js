@@ -77,7 +77,10 @@ export function loadEnv(env = process.env) {
   const planUri = required(env, 'REELIO_PLAN_URI');
   const outputPrefix = required(env, 'REELIO_OUTPUT_PREFIX');
 
-  const workerToken = env.REELIO_WORKER_TOKEN || '';
+  // trim: значение из Secret Manager может нести хвостовой \n (типично для
+  // `openssl rand … | gcloud secrets create --data-file=-`). В заголовке
+  // Authorization он не выживает, и backend отвечал бы 401 на каждый отчёт.
+  const workerToken = (env.REELIO_WORKER_TOKEN || '').trim();
   registerSecret(workerToken);
 
   const contractVersion = int(env, 'REELIO_CONTRACT_VERSION', 1);

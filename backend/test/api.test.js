@@ -471,6 +471,25 @@ describe('канал прогресса worker → backend', () => {
     assert.equal(res.body.error.code, 'UNAUTHENTICATED');
   });
 
+  it('токен с хвостовым переводом строки принимается', async () => {
+    // Секрет из Secret Manager часто несёт \n (openssl … | gcloud … --data-file=-).
+    // В заголовке Authorization он не выживает, поэтому config обязан его срезать,
+    // иначе worker получает вечный 401 и задача навсегда виснет в queued.
+    const dirty = await startApp({ workerToken: `${WORKER_TOKEN}\n` });
+    try {
+      const created = await post(dirty.baseUrl, '/render', renderBody({ projectId: 'proj_trim' }));
+      const res = await post(
+        dirty.baseUrl,
+        `/internal/jobs/${created.body.jobId}/progress`,
+        { phase: 'preparing' },
+        { Authorization: `Bearer ${WORKER_TOKEN}` },
+      );
+      assert.equal(res.status, 200, 'токен с \\n должен совпасть с очищенным');
+    } finally {
+      await dirty.close();
+    }
+  });
+
   it('с чужим токеном — 401', async () => {
     const job = await newJob('proj_auth2');
     const res = await post(

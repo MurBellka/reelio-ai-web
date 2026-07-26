@@ -56,7 +56,12 @@ export const config = {
     publicBaseUrl: (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, ''),
     // Общий секрет worker → backend. В облаке задаётся через Secret Manager.
     // Локально генерируется на старте (никуда не пишется, только в env job'а).
-    workerToken: process.env.WORKER_TOKEN || randomBytes(24).toString('hex'),
+    //
+    // trim обязателен: секрет, созданный из `openssl rand … | gcloud secrets
+    // create --data-file=-`, содержит хвостовой \n. Он не переживает передачу
+    // в HTTP-заголовке Authorization, поэтому worker и backend видели бы
+    // разные значения и получали вечный 401.
+    workerToken: (process.env.WORKER_TOKEN || '').trim() || randomBytes(24).toString('hex'),
   },
 };
 
