@@ -1,19 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/constants.dart';
 import '../core/theme.dart';
 import 'router.dart';
 
-class ReelioApp extends StatefulWidget {
+class ReelioApp extends ConsumerStatefulWidget {
   const ReelioApp({super.key});
 
   @override
-  State<ReelioApp> createState() => _ReelioAppState();
+  ConsumerState<ReelioApp> createState() => _ReelioAppState();
 }
 
-class _ReelioAppState extends State<ReelioApp> {
-  late final GoRouter _router = createRouter();
+class _ReelioAppState extends ConsumerState<ReelioApp> {
+  late final GoRouter _router = ref.read(routerProvider);
 
   @override
   Widget build(BuildContext context) {

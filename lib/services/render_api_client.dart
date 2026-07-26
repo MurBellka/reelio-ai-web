@@ -10,6 +10,15 @@ import '../models/render_job.dart';
 import '../models/render_request.dart';
 import '../models/upload_ticket.dart';
 
+/// Источник токенов для запросов к backend'у.
+///
+/// Отдельный интерфейс, а не прямая зависимость от Firebase: клиент остаётся
+/// тестируемым без инициализации Firebase в тестовой среде.
+abstract class AuthTokens {
+  Future<String?> idToken();
+  Future<String?> appCheckToken();
+}
+
 /// Ошибка обращения к render API. Всегда несёт разобранный [RenderError]
 /// контракта (§7) — UI показывает `message` и решает по `retryable`.
 class RenderApiException implements Exception {
@@ -59,9 +68,16 @@ class RenderApiClient {
     this.timeout = AppConfig.requestTimeout,
     this.maxRetries = AppConfig.maxRetries,
     this.appVersion = '1.0.0',
+    this.tokens,
   }) : _baseUrl = _normalizeBase(baseUrl ?? AppConfig.backendBaseUrl),
        _client = client ?? http.Client(),
        _ownsClient = client == null;
+
+  /// Источник токенов для каждого запроса.
+  ///
+  /// Токены берутся заново перед отправкой, а не кэшируются в клиенте: ID token
+  /// живёт час и обновляется SDK, и закешированный протух бы посреди сессии.
+  final AuthTokens? tokens;
 
   final String _baseUrl;
   final http.Client _client;
@@ -98,6 +114,7 @@ class RenderApiClient {
     };
   }
 
+  /// Синхронные заголовки без авторизации (для запросов без токенов).
   Map<String, String> _headers({
     bool json = true,
     String? idempotencyKey,
@@ -110,6 +127,35 @@ class RenderApiClient {
       'Idempotency-Key': idempotencyKey,
     'If-None-Match': ?ifNoneMatch,
   };
+
+  /// Заголовки с токенами. Firebase ID token отвечает «кто это», App Check —
+  /// «наше ли это приложение»; backend проверяет их независимо.
+  Future<Map<String, String>> _authHeaders({
+    bool json = true,
+    String? idempotencyKey,
+    String? ifNoneMatch,
+  }) async {
+    final base = _headers(
+      json: json,
+      idempotencyKey: idempotencyKey,
+      ifNoneMatch: ifNoneMatch,
+    );
+    final source = tokens;
+    if (source == null) return base;
+
+    final results = await Future.wait([
+      source.idToken(),
+      source.appCheckToken(),
+    ]);
+    final id = results[0];
+    final appCheck = results[1];
+    return {
+      ...base,
+      if (id != null && id.isNotEmpty) 'Authorization': 'Bearer $id',
+      if (appCheck != null && appCheck.isNotEmpty)
+        'X-Firebase-AppCheck': appCheck,
+    };
+  }
 
   Uri _uri(String path, [Map<String, String>? query]) =>
       Uri.parse('$_baseUrl$path').replace(queryParameters: query);
@@ -146,7 +192,11 @@ class RenderApiClient {
     });
 
     final decoded = await _send(
-      () => _client.post(_uri('/uploads'), headers: _headers(), body: body),
+      () async => _client.post(
+        _uri('/uploads'),
+        headers: await _authHeaders(),
+        body: body,
+      ),
     );
     final raw = decoded is Map
         ? (decoded['uploads'] ?? decoded['tickets'])
@@ -179,9 +229,9 @@ class RenderApiClient {
   /// `POST /render` — создаёт задачу (202) либо возвращает существующую (200).
   Future<RenderJob> submitRender(RenderRequest request) async {
     final decoded = await _send(
-      () => _client.post(
+      () async => _client.post(
         _uri('/render'),
-        headers: _headers(idempotencyKey: request.idempotencyKey),
+        headers: await _authHeaders(idempotencyKey: request.idempotencyKey),
         body: jsonEncode(request.toJson()),
       ),
     );
@@ -195,9 +245,9 @@ class RenderApiClient {
     final etag = _jobEtags[jobId];
 
     final response = await _sendRaw(
-      () => _client.get(
+      () async => _client.get(
         _uri('/jobs/$jobId'),
-        headers: _headers(
+        headers: await _authHeaders(
           json: false,
           ifNoneMatch: cached != null ? etag : null,
         ),
@@ -225,7 +275,10 @@ class RenderApiClient {
   Future<RenderJob> cancelJob(String jobId) async {
     try {
       final decoded = await _send(
-        () => _client.post(_uri('/jobs/$jobId/cancel'), headers: _headers()),
+        () async => _client.post(
+          _uri('/jobs/$jobId/cancel'),
+          headers: await _authHeaders(),
+        ),
         retry: false,
       );
       final job = _asJob(decoded);
@@ -240,9 +293,9 @@ class RenderApiClient {
   /// `GET /download?jobId=…` — всегда свежий signed URL (кэшировать нельзя).
   Future<RenderDownload> fetchDownload(String jobId) async {
     final decoded = await _send(
-      () => _client.get(
+      () async => _client.get(
         _uri('/download', {'jobId': jobId}),
-        headers: _headers(json: false),
+        headers: await _authHeaders(json: false),
       ),
     );
     if (decoded is! Map) {
