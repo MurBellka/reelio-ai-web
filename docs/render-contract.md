@@ -369,6 +369,9 @@ Lifecycle бакета:
 Существующий эндпоинт Gemini. Вход — настройки проекта и манифест материалов,
 выход — `{"plan": EditPlan}`. Rate limit 20/мин на IP.
 
+### `POST /uploads`
+Выдаёт разрешения на **прямую** загрузку исходников в бакет (подробно — §8.2).
+
 ### `POST /render`
 Создаёт задачу рендера. Вход — `RenderRequest` (§3).
 `202` — новая задача, `200` — идемпотентный дубликат. Тело — `RenderJob`.
@@ -436,6 +439,66 @@ Heartbeat: тот же запрос с текущим `phase` не реже че
 
 Переменные окружения, которые backend передаёт в Cloud Run Job (§9), включают
 `REELIO_PROGRESS_URL` и `REELIO_WORKER_TOKEN` для этого канала.
+
+### 8.2 Загрузка исходников — `POST /uploads`
+
+**Совместимое дополнение к v1** (добавлено 2026-07-26, версия контракта не
+меняется). §6 описывал пути объектов, но не способ положить туда байты. Worker
+это дополнение не затрагивает — он по-прежнему только читает `sources/`.
+
+Байты идут **из клиента прямо в бакет** по signed URL. Backend их не видит,
+не буферизует и не платит за проксирование трафика.
+
+```jsonc
+// Запрос
+{
+  "contractVersion": 1,
+  "projectId": "proj_9d1…",
+  "assets": [
+    {
+      "id": "asset_a",
+      "type": "video",                                        // video | photo
+      "objectPath": "projects/proj_9d1/sources/asset_a.mp4",  // §6, только sources/
+      "contentType": "video/mp4",                             // из allowlist
+      "sizeBytes": 18234112                                   // опционально
+    }
+  ]
+}
+```
+
+```jsonc
+// Ответ 200 — по одному разрешению на каждый материал, в том же количестве
+{
+  "contractVersion": 1,
+  "uploads": [
+    {
+      "assetId": "asset_a",
+      "objectPath": "projects/proj_9d1/sources/asset_a.mp4",
+      "uploadUrl": "https://storage.googleapis.com/…&X-Goog-Signature=…",
+      "method": "PUT",
+      "headers": { "Content-Type": "video/mp4" },   // клиент обязан повторить
+      "expiresAt": "2026-07-26T16:05:11.000Z"
+    }
+  ]
+}
+```
+
+Обязательный минимум ответа — `assetId`, `uploadUrl`, `expiresAt`; остальные
+поля дополняют его и не ломают клиентов, которые их игнорируют.
+
+Правила:
+
+* URL подписывается **под конкретный `contentType`** — залить под ним файл
+  другого типа нельзя. Клиент обязан отправить ровно тот же `Content-Type`.
+* Путь обязан лежать в `projects/{projectId}/sources/` — записать в `output/`
+  чужой задачи или поверх готового результата невозможно (`INVALID_OBJECT_PATH`).
+* Разрешённые типы: `video/mp4|quicktime|webm|x-msvideo|x-matroska|mpeg|3gpp`,
+  `image/jpeg|png|webp|heic|heif|gif|bmp|tiff`.
+* Лимиты: ≤ 40 материалов за запрос, ≤ 2 ГиБ на файл, TTL ссылки — 60 минут.
+* Rate limit — как у `/render`: 10/мин на IP.
+
+В local mode (§10) ссылка указывает на `PUT /uploads/file` того же сервиса с
+HMAC-подписью — форма ответа и поведение клиента идентичны облачным.
 
 ---
 

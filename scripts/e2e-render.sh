@@ -64,7 +64,7 @@ done
 
 # ── 1. Настоящие исходники ────────────────────────────────────────────────
 PROJECT_ID="e2e_$(date +%s)"
-SRC_DIR="${RENDER_ROOT}/projects/${PROJECT_ID}/sources"
+SRC_DIR="${WORK_DIR}/sources"
 mkdir -p "$SRC_DIR"
 
 echo "→ генерация исходников (ffmpeg)"
@@ -108,10 +108,39 @@ HEALTH="$(curl -fsS "${BASE}/health")" || fail "backend не поднялся; �
 [ "$(jq -r .render.mode <<<"$HEALTH")" = "local" ] || fail "ожидался режим local"
 ok "backend жив: $(jq -c . <<<"$HEALTH")"
 
+# ── 2b. Загрузка исходников через POST /uploads (§8.2) ────────────────────
+echo "→ запрос разрешений на загрузку"
+UPLOAD_REQ="$(jq -n --arg p "$PROJECT_ID" '{
+  contractVersion: 1,
+  projectId: $p,
+  assets: [
+    { id: "asset_a", type: "video",
+      objectPath: ("projects/" + $p + "/sources/asset_a.mp4"),
+      contentType: "video/mp4" },
+    { id: "asset_b", type: "photo",
+      objectPath: ("projects/" + $p + "/sources/asset_b.jpg"),
+      contentType: "image/jpeg" }
+  ]}')"
+
+TICKETS="$(curl -fsS -X POST "${BASE}/uploads" \
+  -H 'Content-Type: application/json' -d "$UPLOAD_REQ")" \
+  || fail "POST /uploads не отработал"
+[ "$(jq '.uploads | length' <<<"$TICKETS")" = "2" ] || fail "ожидалось 2 разрешения"
+
+for asset in asset_a:mp4:video/mp4 asset_b:jpg:image/jpeg; do
+  IFS=: read -r aid ext ctype <<<"$asset"
+  url="$(jq -r --arg id "$aid" '.uploads[] | select(.assetId==$id) | .uploadUrl' <<<"$TICKETS")"
+  [ -n "$url" ] && [ "$url" != "null" ] || fail "нет ссылки для ${aid}"
+  curl -fsS -X PUT -H "Content-Type: ${ctype}" \
+    --data-binary "@${SRC_DIR}/${aid}.${ext}" "$url" >/dev/null \
+    || fail "загрузка ${aid} не удалась"
+done
+ok "материалы загружены напрямую в хранилище"
+
 if [ -z "$WORKER_CMD" ]; then
   echo
   echo "⚠ FFmpeg worker не найден (нет worker/index.js и не задан LOCAL_WORKER_CMD)."
-  echo "  Backend проверен и готов; настоящий MP4 появится после объединения"
+  echo "  Backend и загрузка проверены; настоящий MP4 появится после объединения"
   echo "  ветки worktree-ffmpeg-worker. Запустите скрипт повторно после merge."
   exit 2
 fi

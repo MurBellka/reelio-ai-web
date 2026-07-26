@@ -4,7 +4,7 @@
 // Ключи сервисных аккаунтов НЕ скачиваются и НЕ хранятся в репозитории (§8, §9).
 // Подписанный URL никогда не логируется.
 
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 
@@ -62,6 +62,27 @@ class GcsStorage {
     }
     const [url] = await this.bucket.file(objectPath).getSignedUrl(options);
     return { url, expiresAt: new Date(expires).toISOString() };
+  }
+
+  /**
+   * V4 signed URL на запись одного объекта (§8.2). Подпись привязана к
+   * contentType: клиент не сможет залить под этой ссылкой другой тип.
+   */
+  async signedWriteUrl(objectPath, { contentType, ttlSeconds } = {}) {
+    const ttl = (ttlSeconds || this.ttlSeconds) * 1000;
+    const expires = Date.now() + ttl;
+    const [url] = await this.bucket.file(objectPath).getSignedUrl({
+      version: 'v4',
+      action: 'write',
+      expires,
+      contentType,
+    });
+    return {
+      url,
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      expiresAt: new Date(expires).toISOString(),
+    };
   }
 }
 
@@ -125,16 +146,43 @@ class LocalStorage {
     };
   }
 
-  sign(objectPath, expiresMs) {
+  sign(objectPath, expiresMs, scope = 'read') {
     return createHmac('sha256', this.secret)
-      .update(`${objectPath}:${expiresMs}`)
+      .update(`${scope}:${objectPath}:${expiresMs}`)
       .digest('hex');
   }
 
-  verify(objectPath, expiresMs, signature) {
+  verify(objectPath, expiresMs, signature, scope = 'read') {
     if (!expiresMs || Number(expiresMs) < Date.now()) return false;
-    const expected = this.sign(objectPath, String(expiresMs));
-    return expected === signature;
+    const expected = this.sign(objectPath, String(expiresMs), scope);
+    return expected.length === String(signature).length &&
+      timingSafeEqual(Buffer.from(expected), Buffer.from(String(signature)));
+  }
+
+  /** Локальный аналог signed write URL: приём байтов через PUT /uploads/file. */
+  async signedWriteUrl(objectPath, { contentType, ttlSeconds } = {}) {
+    const expires = Date.now() + (ttlSeconds || this.ttlSeconds) * 1000;
+    const sig = this.sign(objectPath, String(expires), 'write');
+    const q = new URLSearchParams({
+      object: objectPath,
+      expires: String(expires),
+      sig,
+      contentType,
+    });
+    return {
+      url: `${this.baseUrl}/uploads/file?${q.toString()}`,
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      expiresAt: new Date(expires).toISOString(),
+    };
+  }
+
+  /** Приём загруженных байтов (только local mode). */
+  async writeBytes(objectPath, buffer) {
+    const full = this.pathFor(objectPath);
+    await mkdir(dirname(full), { recursive: true });
+    await writeFile(full, buffer);
+    return full;
   }
 
   async signedReadUrl(objectPath, { fileName, ttlSeconds } = {}) {

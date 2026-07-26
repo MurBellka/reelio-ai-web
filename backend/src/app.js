@@ -41,7 +41,9 @@ export async function createApp(config = defaultConfig) {
       if (!origin || config.allowedOrigins.has(origin)) return cb(null, true);
       return cb(new Error('Origin not allowed'));
     },
-    methods: ['GET', 'POST', 'OPTIONS'],
+    // PUT — только для локального приёмника загрузок (§10). В облаке байты
+    // идут прямо в бакет, и CORS там настраивается на самом бакете.
+    methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Idempotency-Key', 'X-Reelio-Client', 'If-None-Match'],
     exposedHeaders: ['ETag'],
   };

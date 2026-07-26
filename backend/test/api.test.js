@@ -142,6 +142,121 @@ describe('health', () => {
   });
 });
 
+describe('POST /uploads', () => {
+  let ctx;
+  before(async () => {
+    ctx = await startApp();
+  });
+  after(() => ctx.close());
+
+  function uploadBody(projectId = PROJECT, overrides = {}) {
+    return {
+      contractVersion: 1,
+      projectId,
+      assets: [
+        {
+          id: 'asset_a',
+          type: 'video',
+          objectPath: `projects/${projectId}/sources/asset_a.mp4`,
+          contentType: 'video/mp4',
+          sizeBytes: 1024,
+        },
+        {
+          id: 'asset_b',
+          type: 'photo',
+          objectPath: `projects/${projectId}/sources/asset_b.jpg`,
+          contentType: 'image/jpeg',
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  it('выдаёт по разрешению на каждый материал', async () => {
+    const res = await post(ctx.baseUrl, '/uploads', uploadBody('proj_up'));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.contractVersion, 1);
+    assert.equal(res.body.uploads.length, 2);
+
+    const [first] = res.body.uploads;
+    assert.equal(first.assetId, 'asset_a');
+    assert.equal(first.objectPath, 'projects/proj_up/sources/asset_a.mp4');
+    assert.equal(first.method, 'PUT');
+    assert.equal(first.headers['Content-Type'], 'video/mp4');
+    assert.ok(first.uploadUrl);
+    assert.ok(first.expiresAt > new Date().toISOString());
+  });
+
+  it('загруженный файл попадает по пути из разрешения', async () => {
+    const res = await post(ctx.baseUrl, '/uploads', uploadBody('proj_put'));
+    const ticket = res.body.uploads[0];
+
+    const put = await fetch(ticket.uploadUrl, {
+      method: ticket.method,
+      headers: ticket.headers,
+      body: 'video-bytes-here',
+    });
+    assert.equal(put.status, 200);
+
+    assert.equal(await ctx.app.locals.storage.exists(ticket.objectPath), true);
+    const stat = await ctx.app.locals.storage.statObject(ticket.objectPath);
+    assert.equal(stat.sizeBytes, 'video-bytes-here'.length);
+  });
+
+  it('подпись привязана к типу содержимого', async () => {
+    const res = await post(ctx.baseUrl, '/uploads', uploadBody('proj_ct'));
+    const ticket = res.body.uploads[0];
+    const put = await fetch(ticket.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/html' },
+      body: '<script>alert(1)</script>',
+    });
+    assert.equal(put.status, 400);
+  });
+
+  it('поддельная подпись отклоняется', async () => {
+    const res = await post(ctx.baseUrl, '/uploads', uploadBody('proj_forge'));
+    const tampered = res.body.uploads[0].uploadUrl.replace(/sig=[a-f0-9]+/, 'sig=deadbeef');
+    const put = await fetch(tampered, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'video/mp4' },
+      body: 'x',
+    });
+    assert.equal(put.status, 403);
+  });
+
+  it('запись вне sources/ проекта запрещена', async () => {
+    const body = uploadBody('proj_esc');
+    body.assets[0].objectPath = 'projects/proj_esc/jobs/job_1/output/reel_1920p.mp4';
+    const res = await post(ctx.baseUrl, '/uploads', body);
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'INVALID_OBJECT_PATH');
+  });
+
+  it('запись в чужой проект запрещена', async () => {
+    const body = uploadBody('proj_mine');
+    body.assets[0].objectPath = 'projects/victim/sources/asset_a.mp4';
+    const res = await post(ctx.baseUrl, '/uploads', body);
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'INVALID_OBJECT_PATH');
+  });
+
+  it('неподдерживаемый тип содержимого отклоняется', async () => {
+    const body = uploadBody('proj_type');
+    body.assets[0].contentType = 'application/x-sh';
+    const res = await post(ctx.baseUrl, '/uploads', body);
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'INVALID_REQUEST');
+    assert.match(res.body.error.field, /contentType/);
+  });
+
+  it('чужая версия контракта отклоняется', async () => {
+    const res = await post(ctx.baseUrl, '/uploads', uploadBody(PROJECT, { contractVersion: 2 }));
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'CONTRACT_VERSION_UNSUPPORTED');
+  });
+});
+
 describe('POST /render', () => {
   let ctx;
   before(async () => {

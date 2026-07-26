@@ -2,9 +2,10 @@
 // /download и внутренний канал прогресса worker'а (§8, §8.1).
 
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { Router } from 'express';
+import express, { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 
+import { CONTRACT_VERSION, MAX_UPLOAD_BYTES, validateUploadRequest } from './contract.js';
 import { ApiError } from './errors.js';
 import { toPublicJob } from './jobs.js';
 import { LocalStorage } from './storage.js';
@@ -42,6 +43,33 @@ export function createRenderRoutes({ service, config, storage }) {
     max: config.rateLimits.poll,
     standardHeaders: true,
   });
+
+  // ── POST /uploads — разрешения на прямую загрузку исходников (§8.2) ─────
+  router.post(
+    '/uploads',
+    renderLimiter,
+    wrap(async (req, res) => {
+      const { assets } = validateUploadRequest(req.body);
+      // Байты в backend не попадают: он лишь подписывает ссылки в бакет.
+      const uploads = await Promise.all(
+        assets.map(async (asset) => {
+          const signed = await storage.signedWriteUrl(asset.objectPath, {
+            contentType: asset.contentType,
+          });
+          return {
+            assetId: asset.id,
+            objectPath: asset.objectPath,
+            uploadUrl: signed.url,
+            method: signed.method,
+            headers: signed.headers,
+            expiresAt: signed.expiresAt,
+          };
+        }),
+      );
+      res.set('Cache-Control', 'no-store');
+      res.json({ contractVersion: CONTRACT_VERSION, uploads });
+    }),
+  );
 
   // ── POST /render ────────────────────────────────────────────────────────
   router.post(
@@ -109,8 +137,29 @@ export function createRenderRoutes({ service, config, storage }) {
     }),
   );
 
-  // ── Локальный аналог signed URL (§10). В облаке файл отдаёт сам GCS. ─────
+  // ── Локальный аналог signed URL (§10). В облаке файлы идут мимо backend'а. ─
   if (storage instanceof LocalStorage) {
+    // Приём байтов исходника — эквивалент PUT напрямую в бакет.
+    router.put(
+      '/uploads/file',
+      express.raw({ type: '*/*', limit: MAX_UPLOAD_BYTES }),
+      wrap(async (req, res) => {
+        const object = String(req.query.object || '');
+        const expires = String(req.query.expires || '');
+        const sig = String(req.query.sig || '');
+        if (!storage.verify(object, expires, sig, 'write')) {
+          throw new ApiError('FORBIDDEN', 'Ссылка на загрузку недействительна или истекла.');
+        }
+        const expectedType = String(req.query.contentType || '');
+        if (expectedType && req.get('Content-Type') !== expectedType) {
+          throw new ApiError('INVALID_REQUEST', 'Тип содержимого не совпадает с подписанным.');
+        }
+        await storage.writeBytes(object, req.body ?? Buffer.alloc(0));
+        res.set('Cache-Control', 'no-store');
+        res.status(200).end();
+      }),
+    );
+
     router.get(
       '/download/file',
       wrap(async (req, res) => {

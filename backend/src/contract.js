@@ -24,6 +24,34 @@ export const CONCRETE_RESOLUTIONS = ['hd720', 'fullHd1080', 'twoK1440', 'fourK21
 export const AUTO_RESOLUTION = 'maximumAvailable';
 export const ALLOWED_FPS = [30, 60];
 
+/** Максимум материалов в проекте: 20 видео + 20 фото (лимиты клиента). */
+export const MAX_ASSETS_PER_UPLOAD = 40;
+
+/** Потолок размера одного исходника. */
+export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+
+/**
+ * Разрешённые MIME-типы исходников. Подписываем URL строго под конкретный
+ * тип: клиент не сможет залить в бакет что-то другое под видом видео.
+ */
+export const ALLOWED_UPLOAD_CONTENT_TYPES = new Set([
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+  'video/x-msvideo',
+  'video/x-matroska',
+  'video/mpeg',
+  'video/3gpp',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'image/gif',
+  'image/bmp',
+  'image/tiff',
+]);
+
 export const STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancelled'];
 export const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 
@@ -448,6 +476,88 @@ export function validateRenderRequest(body) {
   });
 
   return { projectId, plan, assets, export: exportSettings, totalDuration };
+}
+
+/**
+ * Валидация `POST /uploads` (§8.2): выдача разрешений на прямую загрузку
+ * исходников в бакет. Байты идут клиент → хранилище, минуя backend.
+ */
+export function validateUploadRequest(body) {
+  requireObject(body, 'body');
+
+  const version = body.contractVersion ?? CONTRACT_VERSION;
+  if (Number(version) !== CONTRACT_VERSION) {
+    throw new ApiError(
+      'CONTRACT_VERSION_UNSUPPORTED',
+      `Поддерживается только версия контракта ${CONTRACT_VERSION}.`,
+      { field: 'contractVersion' },
+    );
+  }
+
+  const projectId = body.projectId;
+  if (typeof projectId !== 'string' || !ID_RE.test(projectId)) {
+    bad('INVALID_REQUEST', 'Идентификатор проекта должен быть [A-Za-z0-9_-]{1,64}.', 'projectId');
+  }
+
+  const rawAssets = body.assets;
+  if (!Array.isArray(rawAssets) || rawAssets.length === 0) {
+    bad('INVALID_REQUEST', 'Нужен непустой список материалов «assets».', 'assets');
+  }
+  if (rawAssets.length > MAX_ASSETS_PER_UPLOAD) {
+    bad(
+      'INVALID_REQUEST',
+      `Слишком много материалов (максимум ${MAX_ASSETS_PER_UPLOAD}).`,
+      'assets',
+    );
+  }
+
+  const seen = new Set();
+  const assets = rawAssets.map((raw, i) => {
+    const field = `assets[${i}]`;
+    requireObject(raw, field);
+
+    const id = raw.id;
+    if (typeof id !== 'string' || !ID_RE.test(id)) {
+      bad('INVALID_REQUEST', 'Идентификатор материала должен быть [A-Za-z0-9_-]{1,64}.', `${field}.id`);
+    }
+    if (seen.has(id)) {
+      bad('INVALID_REQUEST', `Дублирующийся идентификатор материала «${id}».`, `${field}.id`);
+    }
+    seen.add(id);
+
+    if (!MEDIA_TYPES.has(raw.type)) {
+      bad('INVALID_REQUEST', 'Тип материала должен быть video или photo.', `${field}.type`);
+    }
+
+    // Загружать можно только в sources/ своего проекта — не в output чужой
+    // задачи и не поверх готового результата.
+    const objectPath = assertObjectPath(raw.objectPath, projectId, `${field}.objectPath`);
+    if (!objectPath.startsWith(sourcesPrefix(projectId))) {
+      bad(
+        'INVALID_OBJECT_PATH',
+        'Исходники загружаются только в каталог sources проекта.',
+        `${field}.objectPath`,
+      );
+    }
+
+    const contentType = raw.contentType;
+    if (typeof contentType !== 'string' || !ALLOWED_UPLOAD_CONTENT_TYPES.has(contentType)) {
+      bad('INVALID_REQUEST', `Неподдерживаемый тип содержимого «${contentType}».`, `${field}.contentType`);
+    }
+
+    const sizeBytes = raw.sizeBytes == null ? null : Number(raw.sizeBytes);
+    if (sizeBytes != null && (!Number.isFinite(sizeBytes) || sizeBytes < 0 || sizeBytes > MAX_UPLOAD_BYTES)) {
+      bad(
+        'INVALID_REQUEST',
+        `Размер материала должен быть от 0 до ${MAX_UPLOAD_BYTES} байт.`,
+        `${field}.sizeBytes`,
+      );
+    }
+
+    return { id, type: raw.type, objectPath, contentType, sizeBytes };
+  });
+
+  return { projectId, assets };
 }
 
 /** Отпечаток идемпотентности (§5). */
