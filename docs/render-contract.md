@@ -6,7 +6,7 @@
 |---|---|---|---|
 | **Flutter UI** | клиент | `RenderJob`, `RenderResult` | `RenderRequest` (внутри — `EditPlan`) |
 | **Backend API** (Cloud Run Service) | координатор | `RenderRequest` | `RenderJob` в Firestore, запуск Cloud Run Job |
-| **FFmpeg worker** (Cloud Run Job) | исполнитель | `plan.json` из Cloud Storage | прогресс в Firestore, MP4 в Cloud Storage |
+| **FFmpeg worker** (Cloud Run Job) | исполнитель | `plan.json` из Cloud Storage | MP4 в Cloud Storage, прогресс через `POST /internal/jobs/{id}/progress` (§8.1) |
 
 > **Правило совместимости.** Версия контракта — `render-contract/1`. Любое поле
 > можно **добавить** (клиенты обязаны игнорировать неизвестные поля), но нельзя
@@ -401,6 +401,42 @@ worker увидит флаг). `409 JOB_ALREADY_TERMINAL` для завершё�
   а не кэшировать ссылку.
 * Signed URL никогда не пишется в логи.
 
+### 8.1 Внутренний канал worker → backend
+
+**Только для FFmpeg worker'а. Клиентам недоступен и в CORS-allowlist не входит.**
+Firestore пишет **исключительно backend** — worker не имеет доступа к БД, что
+сокращает его права до одного бакета (§9).
+
+```
+POST /internal/jobs/{id}/progress
+Authorization: Bearer ${REELIO_WORKER_TOKEN}
+Content-Type: application/json
+```
+
+```jsonc
+{
+  "phase": "encoding",       // §4.2; обязателен
+  "fraction": 0.4,           // 0..1 — прогресс ВНУТРИ этапа; backend отобразит
+                             // его в глобальный диапазон этапа
+  "message": "Кодирование 1080p",
+  "result": { /* RenderResult §4.3 — только вместе с phase: "done" */ },
+  "error": { "code": "WORKER_FAILED", "message": "…" }  // только с phase: "failed"
+}
+```
+
+Ответ `200 { "ok": true, "cancelRequested": false, "status": "running" }`.
+
+Worker **обязан** проверять `cancelRequested` в каждом ответе: при `true` —
+корректно остановиться, удалить `tmp/` и завершиться с `phase: "cancelled"`.
+Это и есть кооперативная отмена из `POST /jobs/{id}/cancel`.
+
+Heartbeat: тот же запрос с текущим `phase` не реже чем раз в 30 с.
+`404 JOB_NOT_FOUND` — задача удалена; `409 JOB_ALREADY_TERMINAL` — задача уже
+завершена, worker обязан немедленно прекратить работу.
+
+Переменные окружения, которые backend передаёт в Cloud Run Job (§9), включают
+`REELIO_PROGRESS_URL` и `REELIO_WORKER_TOKEN` для этого канала.
+
 ---
 
 ## 9. Запуск рендера и IAM
@@ -409,9 +445,14 @@ Backend запускает **Cloud Run Job** `${RENDER_JOB_NAME}` через
 `run.googleapis.com/v2 …:run` с переопределением переменных окружения:
 
 ```
-REELIO_JOB_ID, REELIO_PROJECT_ID, REELIO_PLAN_URI (gs://…/plan.json),
-REELIO_OUTPUT_PREFIX (projects/{projectId}/jobs/{jobId}/output),
-REELIO_BUCKET, REELIO_CONTRACT_VERSION=1
+REELIO_JOB_ID           job_01J8…
+REELIO_PROJECT_ID       proj_9d1…
+REELIO_BUCKET           reelio-render-eu
+REELIO_PLAN_URI         gs://reelio-render-eu/projects/…/jobs/…/plan.json
+REELIO_OUTPUT_PREFIX    projects/{projectId}/jobs/{jobId}/output
+REELIO_PROGRESS_URL     https://…/internal/jobs/{jobId}/progress   (§8.1)
+REELIO_WORKER_TOKEN     ***  (Secret Manager, в логи не попадает)
+REELIO_CONTRACT_VERSION 1
 ```
 
 `RenderJob.executionName` (внутреннее поле, клиенту не отдаётся) хранит имя
@@ -422,7 +463,7 @@ execution для отмены.
 | SA | Роли | Зачем |
 |---|---|---|
 | `reelio-api@` (Cloud Run Service) | `roles/datastore.user`, `roles/storage.objectAdmin` (на бакет), `roles/run.invoker` + `roles/run.developer` (на Job), `roles/iam.serviceAccountTokenCreator` (на себя) | Firestore, объекты, запуск/отмена Job, подпись URL |
-| `reelio-worker@` (Cloud Run Job) | `roles/datastore.user`, `roles/storage.objectAdmin` (на бакет) | Читать исходники, писать результат и прогресс |
+| `reelio-worker@` (Cloud Run Job) | `roles/storage.objectAdmin` (только на бакет) | Читать исходники, писать результат. Доступа к Firestore **нет** — прогресс идёт через §8.1 |
 
 Запрещено: `roles/owner`, `roles/editor`, ключи SA в файлах/секретах, публичный
 доступ к бакету, `allUsers` в IAM. Аутентификация в GCP — только ADC/Workload
@@ -441,3 +482,9 @@ Identity.
 Это нужно для end-to-end тестов **без создания платных ресурсов**. Формат
 запросов/ответов в local mode идентичен облачному — клиент разницы не видит,
 кроме `health.render.mode == "local"`.
+
+Worker в local mode получает те же переменные окружения (§9), включая
+`REELIO_PROGRESS_URL` (`http://127.0.0.1:{PORT}/internal/jobs/{id}/progress`) и
+`REELIO_WORKER_TOKEN`, только `REELIO_PLAN_URI` указывает на файл
+(`file://…/plan.json`), а не на `gs://`. Один и тот же код worker'а обязан
+работать в обоих режимах — различать их следует по схеме URI.
