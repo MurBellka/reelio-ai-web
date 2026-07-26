@@ -24,6 +24,13 @@ export const config = {
     model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
   },
 
+  // Лимиты запросов в минуту на IP. Значения по умолчанию — из контракта §8.
+  rateLimits: {
+    editPlan: int('RATE_LIMIT_EDIT_PLAN', 20),
+    render: int('RATE_LIMIT_RENDER', 10),
+    poll: int('RATE_LIMIT_POLL', 240),
+  },
+
   allowedOrigins: new Set(
     [
       process.env.ALLOWED_ORIGIN || 'https://murbellka.github.io',
@@ -54,15 +61,15 @@ export const config = {
 };
 
 /** Безопасный снимок конфигурации для /health — без секретов. */
-export function healthSnapshot() {
+export function healthSnapshot(cfg = config) {
   return {
     ok: true,
     service: 'reelio-backend',
     contractVersion: 1,
-    demo: !config.gemini.apiKey,
+    demo: !cfg.gemini.apiKey,
     render: {
-      configured: RENDER_MODE === 'cloud',
-      mode: RENDER_MODE,
+      configured: cfg.render.mode === 'cloud',
+      mode: cfg.render.mode,
     },
   };
 }
