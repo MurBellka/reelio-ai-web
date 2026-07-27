@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
+
+import '../core/app_config.dart';
 
 import '../models/render_job.dart';
 import '../models/render_request.dart';
@@ -189,8 +192,32 @@ class RenderUiState {
   static const Object _keep = Object();
 }
 
+/// Адрес backend'а. Отдельный провайдер нужен ровно затем же, зачем и
+/// транспорт: тест задаёт окружение, а сборка клиента остаётся настоящей.
+final renderBaseUrlProvider = Provider<String>(
+  (ref) => AppConfig.backendBaseUrl,
+);
+
+/// HTTP-транспорт для клиентов API.
+///
+/// Вынесен отдельно, чтобы тесты подменяли ТОЛЬКО транспорт, а сборка клиента
+/// оставалась настоящей: два инцидента подряд случились именно в проводке, а
+/// не в самих классах, и тесты с ручной подстановкой их не ловили.
+final renderHttpClientProvider = Provider<http.Client>((ref) {
+  final client = http.Client();
+  ref.onDispose(client.close);
+  return client;
+});
+
 final renderApiClientProvider = Provider<RenderApiClient>((ref) {
-  final client = RenderApiClient();
+  // Токены обязательны: /uploads, /render, /jobs/*, /cancel и /download
+  // защищены входом. Без них пользователь доходил до экспорта и получал 401
+  // уже после того, как выбрал материалы.
+  final client = RenderApiClient(
+    baseUrl: ref.watch(renderBaseUrlProvider),
+    tokens: ref.watch(authTokensProvider),
+    client: ref.watch(renderHttpClientProvider),
+  );
   ref.onDispose(client.close);
   return client;
 });
@@ -381,11 +408,37 @@ class RenderController extends Notifier<RenderUiState> {
         ),
       );
     } on RenderApiException catch (e) {
-      _fail(e.error);
+      _fail(_humanize(e.error));
     } on RenderRequestException catch (e) {
       _fail(RenderError(code: 'PLAN_INVALID', message: e.message));
     }
   }
+
+  /// Делает ошибку API понятной пользователю.
+  ///
+  /// «Ошибка рендеринга» не подсказывает, что делать: войти заново,
+  /// подтвердить почту и дождаться следующих суток — разные действия.
+  static RenderError _humanize(RenderError error) => switch (error.code) {
+    'UNAUTHENTICATED' => RenderError(
+      code: error.code,
+      message: 'Сессия истекла. Войдите в аккаунт заново и повторите экспорт.',
+      retryable: false,
+      requestId: error.requestId,
+    ),
+    'EMAIL_NOT_VERIFIED' => RenderError(
+      code: error.code,
+      message: 'Подтвердите адрес электронной почты, чтобы собрать ролик.',
+      retryable: false,
+      requestId: error.requestId,
+    ),
+    'APP_CHECK_FAILED' => RenderError(
+      code: error.code,
+      message: 'Запрос отклонён проверкой приложения. Обновите страницу.',
+      retryable: true,
+      requestId: error.requestId,
+    ),
+    _ => error,
+  };
 
   /// Повтор после ошибки или отмены — сервер создаст новую задачу (§5.3).
   Future<void> retry() async {
