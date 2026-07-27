@@ -10,6 +10,10 @@ permissions:
   pages: write
   id-token: write
 
+# Единственный workflow, публикующий в Pages. Раньше их было два с РАЗНЫМИ
+# группами concurrency: они не сериализовались между собой, и побеждал тот, кто
+# финишировал последним. Второй собирал без REELIO_BACKEND_URL, то есть в
+# демо-режиме, — сайт случайным образом оказывался без backend'а.
 concurrency:
   group: pages
   cancel-in-progress: true
