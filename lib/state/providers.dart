@@ -9,6 +9,7 @@ import '../models/export_settings.dart';
 import '../models/media_asset.dart';
 import '../models/project_state.dart';
 import '../services/ai_editing_service.dart';
+import 'auth_providers.dart';
 import '../services/gemini_ai_editing_service.dart';
 import '../services/media_picker_service.dart';
 import '../services/storage_service.dart';
@@ -24,7 +25,11 @@ final storageServiceProvider = Provider<StorageService>(
 /// (`--dart-define=REELIO_BACKEND_URL=…`), иначе — мок (Demo Mode).
 final aiServiceProvider = Provider<AiEditingService>((ref) {
   if (AppConfig.hasBackend) {
-    final service = GeminiAiEditingService();
+    // /edit-plan защищён так же, как остальной API: без токенов он ответит
+    // 401, и до Gemini запрос не дойдёт.
+    final service = GeminiAiEditingService(
+      tokens: ref.watch(authTokensProvider),
+    );
     ref.onDispose(service.cancel);
     return service;
   }
