@@ -1,0 +1,18 @@
+{
+  "name": "reelio-ffmpeg-worker-v2",
+  "version": "1.0.0",
+  "description": "Reelio AI FFmpeg render worker v2 — вертикальный MP4 по EditPlan v2 (docs/render-contract-v2.md). Без фоновой музыки.",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:unit": "node --test \"test/unit/*.test.js\"",
+    "test:e2e": "node --test \"test/e2e/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {}
+}
