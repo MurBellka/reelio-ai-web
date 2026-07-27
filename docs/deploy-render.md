@@ -196,12 +196,22 @@ gcloud run jobs deploy reelio-ffmpeg-worker \
   --project "$P" --region europe-west1 \
   --source backend/worker/ \
   --service-account "$WORKER_SA" \
-  --cpu 4 --memory 8Gi --task-timeout 30m --max-retries 1 \
+  --cpu 4 --memory 8Gi --task-timeout 15m --max-retries 0 --tasks 1 \
   --set-secrets REELIO_WORKER_TOKEN=reelio-worker-token:latest
 ```
 
 Остальные переменные (`REELIO_JOB_ID`, `REELIO_PLAN_URI`, …) backend передаёт на
 каждый запуск через overrides — задавать их в описании Job'а не нужно.
+
+Параметры выбраны как ограничитель расходов публичной беты: одна задача,
+**без повторов** (неудачный рендер не должен молча стоить второй запуск) и
+таймаут 15 минут при потолке ролика в 2 минуты — с запасом на 4K, но без
+возможности крутиться полчаса.
+
+Схему путей worker больше не конструирует: он получает `REELIO_PROJECT_PREFIX`
+и `REELIO_JOB_PREFIX` от backend'а, где в них зашит проверенный uid владельца.
+Если переменных нет, worker откатывается на старую схему `projects/{id}/` —
+благодаря этому его можно обновлять независимо от backend'а.
 
 ## Шаг 6. Переключение backend'а в cloud mode
 
