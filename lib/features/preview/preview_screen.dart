@@ -8,6 +8,7 @@ import '../../core/theme.dart';
 import '../../models/edit_plan.dart';
 import '../../models/enums.dart';
 import '../../models/media_asset.dart';
+import '../../shared/profile_button.dart';
 import '../../shared/app_background.dart';
 import '../../shared/premium_widgets.dart';
 import '../../shared/stage_progress.dart';
@@ -39,7 +40,10 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     };
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Предпросмотр')),
+      appBar: AppBar(
+        title: const Text('Предпросмотр'),
+        actions: const [ProfileButton()],
+      ),
       extendBodyBehindAppBar: true,
       body: AppBackground(
         child: SafeArea(

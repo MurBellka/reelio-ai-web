@@ -10,7 +10,11 @@
 // не логируются, не возвращаются клиенту и не попадают в тексты ошибок.
 
 import { createApp } from './src/app.js';
-import { config } from './src/config.js';
+import { assertSafeConfig, config } from './src/config.js';
+
+// Проверяем ДО поднятия сервера: небезопасная конфигурация не должна начать
+// принимать запросы даже на секунду.
+assertSafeConfig(config);
 
 const app = await createApp(config);
 

@@ -16,6 +16,7 @@ class GcsStorage {
     this.bucketName = config.render.bucket;
     this.bucket = bucket;
     this.ttlSeconds = config.render.signedUrlTtlSeconds;
+    this.mountPath = config.media?.mountPath || '';
   }
 
   get mode() {
@@ -86,12 +87,27 @@ class GcsStorage {
   }
 
   /**
-   * Скачивает начало объекта во временный файл для проверки содержимого.
+   * Путь, по которому ffprobe может прочитать объект.
    *
-   * Ограничение по объёму обязательно: исходник может весить до двух
-   * гигабайт, а /tmp в Cloud Run живёт в памяти контейнера.
+   * Через FUSE-монтирование — напрямую, без копии: чтение идёт настоящими
+   * seek'ами, поэтому неважно, лежит ли moov в начале файла или в конце, а
+   * двухгигабайтный исходник не попадает ни в память, ни на диск.
+   *
+   * Запасной путь — ограниченная копия начала файла. Он работает только для
+   * файлов с метаданными в начале (MP4 с faststart), поэтому нужен именно как
+   * запасной, а не как основной.
    */
   async downloadToTemp(objectPath, maxBytes) {
+    if (this.mountPath) {
+      const mounted = join(this.mountPath, objectPath);
+      try {
+        await stat(mounted);
+        return { path: mounted, temporary: false, mounted: true };
+      } catch {
+        // Монтирование недоступно — идём запасным путём.
+      }
+    }
+
     const dir = await mkdtemp(join(tmpdir(), 'reelio-probe-'));
     const target = join(dir, basename(objectPath).replace(/[^\w.-]/g, '_'));
     await pipeline(
@@ -99,7 +115,7 @@ class GcsStorage {
       createWriteStream(target),
     );
     // temporary: копия наша, её обязан удалить вызывающий.
-    return { path: target, temporary: true };
+    return { path: target, temporary: true, mounted: false };
   }
 
   /** Удаляет всё под префиксом. Возвращает число удалённых объектов. */

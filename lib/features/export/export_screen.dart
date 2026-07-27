@@ -11,6 +11,7 @@ import '../../core/platform/file_ops.dart';
 import '../../core/theme.dart';
 import '../../models/enums.dart';
 import '../../models/export_settings.dart';
+import '../../shared/profile_button.dart';
 import '../../shared/app_background.dart';
 import '../../shared/premium_widgets.dart';
 import '../../shared/stage_progress.dart';
@@ -174,7 +175,10 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
         hasRender && ref.watch(renderControllerProvider).isBusy;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Экспорт')),
+      appBar: AppBar(
+        title: const Text('Экспорт'),
+        actions: const [ProfileButton()],
+      ),
       extendBodyBehindAppBar: true,
       body: AppBackground(
         child: SafeArea(
