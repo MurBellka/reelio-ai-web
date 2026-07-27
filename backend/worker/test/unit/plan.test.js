@@ -203,3 +203,53 @@ test('неизвестные поля игнорируются, а не лома
   const plan = parseRenderPlan(document, CTX);
   assert.equal(plan.clips.length, 2);
 });
+
+test('план с uid-схемой принимается, когда backend передал префикс', () => {
+  // Схема путей задаётся backend'ом и содержит проверенный uid владельца.
+  // Worker обязан принимать её как есть, а не сверять с собственной догадкой.
+  const prefix = 'users/uid123/projects/proj_test/';
+  const doc = makePlanDocument();
+  for (const asset of doc.assets) {
+    asset.objectPath = `${prefix}sources/${asset.id}.mp4`;
+  }
+
+  const parsed = parseRenderPlan(doc, {
+    jobId: 'job_TEST0001',
+    projectId: 'proj_test',
+    projectPrefix: prefix,
+    contractVersion: 1,
+  });
+
+  assert.ok(parsed.assets.length > 0);
+  for (const asset of parsed.assets) {
+    assert.ok(asset.objectPath.startsWith(prefix), `путь вне префикса: ${asset.objectPath}`);
+  }
+});
+
+test('без переданного префикса действует старая схема', () => {
+  // Обратная совместимость: worker обновляется независимо от backend'а.
+  const doc = makePlanDocument();
+  const parsed = parseRenderPlan(doc, {
+    jobId: 'job_TEST0001',
+    projectId: 'proj_test',
+    contractVersion: 1,
+  });
+  for (const asset of parsed.assets) {
+    assert.ok(asset.objectPath.startsWith('projects/proj_test/'));
+  }
+});
+
+test('путь чужого владельца отвергается', () => {
+  const prefix = 'users/uid123/projects/proj_test/';
+  const doc = makePlanDocument();
+  doc.assets[0].objectPath = 'users/OTHER/projects/proj_test/sources/a.mp4';
+
+  assert.throws(() =>
+    parseRenderPlan(doc, {
+      jobId: 'job_TEST0001',
+      projectId: 'proj_test',
+      projectPrefix: prefix,
+      contractVersion: 1,
+    }),
+  );
+});

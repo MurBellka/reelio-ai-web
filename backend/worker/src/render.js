@@ -80,6 +80,10 @@ async function renderInside({ env, storage, reporter, logger, workDir, sourcesDi
   const plan = parseRenderPlan(document, {
     jobId: env.jobId,
     projectId: env.projectId,
+    // Префикс обязан дойти сюда: именно он ограничивает пути (§6), и в нём
+    // зашит проверенный uid владельца. Без него сработает откат на старую
+    // схему, и план с новой схемой будет отвергнут.
+    projectPrefix: env.projectPrefix,
     contractVersion: env.contractVersion,
   });
 
