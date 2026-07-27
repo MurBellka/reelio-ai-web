@@ -78,7 +78,11 @@ class AppConstants {
   /// после перезагрузки страницы.
   static const String activeRenderJobKey = 'reelio_active_render_job_v1';
 
-  /// Плейсхолдеры для будущей публикации.
-  static const String privacyPolicyUrl = 'https://example.com/reelio/privacy';
-  static const String supportUrl = 'https://example.com/reelio/support';
+  /// Публичный контакт поддержки. Один адрес на всё: вопросы, жалобы и
+  /// запросы на удаление данных — пользователю не нужно гадать, куда писать.
+  static const String supportEmail = 'reelio.support.app@gmail.com';
+
+  /// Готовая ссылка для кнопки «Написать в поддержку».
+  static String supportMailto({String subject = 'Reelio AI'}) =>
+      'mailto:$supportEmail?subject=${Uri.encodeComponent(subject)}';
 }

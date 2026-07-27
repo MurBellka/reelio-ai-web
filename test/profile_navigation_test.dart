@@ -5,9 +5,12 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:reelio_ai/core/constants.dart';
 import 'package:reelio_ai/shared/profile_button.dart';
 
 void main() {
+  _contactTests();
+
   /// Типичный экран телефона: узкий и высокий.
   const phone = Size(390, 844);
 
@@ -68,6 +71,29 @@ void main() {
       final size = tester.getSize(find.byType(TextButton));
       expect(size.height, greaterThanOrEqualTo(48));
       expect(size.width, greaterThanOrEqualTo(48));
+    });
+  });
+}
+
+// ── Публичный контакт ──────────────────────────────────────────────────────
+
+void _contactTests() {
+  group('контакт поддержки', () {
+    test('адрес задан и не является заглушкой', () {
+      expect(AppConstants.supportEmail, isNotEmpty);
+      expect(AppConstants.supportEmail, contains('@'));
+      // Заглушки не должны доехать до публичной сборки.
+      expect(AppConstants.supportEmail, isNot(contains('example.com')));
+      expect(AppConstants.supportEmail, isNot(contains('TODO')));
+    });
+
+    test('mailto собирается корректно и кодирует тему', () {
+      final link = AppConstants.supportMailto(subject: 'Удаление данных');
+      expect(link, startsWith('mailto:${AppConstants.supportEmail}'));
+      expect(link, contains('subject='));
+      // Пробелы обязаны быть закодированы, иначе часть темы потеряется.
+      expect(link, isNot(contains('Удаление данных')));
+      expect(Uri.parse(link).queryParameters['subject'], 'Удаление данных');
     });
   });
 }

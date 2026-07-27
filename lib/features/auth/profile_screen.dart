@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/router.dart';
+import '../../core/constants.dart';
 import '../../shared/app_background.dart';
+import '../../shared/support_link.dart';
 import '../../shared/premium_widgets.dart';
 import '../../state/auth_providers.dart';
 import '../../state/providers.dart';
@@ -278,6 +280,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       title: const Text('Политика и хранение файлов'),
                       onTap: () => context.push(AppRoutes.privacy),
                     ),
+                    const Divider(height: 1),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.mail_outline_rounded),
+                      title: const Text('Написать в поддержку'),
+                      subtitle: const Text(AppConstants.supportEmail),
+                      onTap: () => openSupportMail(
+                        context,
+                        subject: 'Reelio AI — вопрос',
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -403,8 +416,27 @@ class PrivacyScreen extends StatelessWidget {
                 'Удаление',
                 'В профиле можно удалить отдельный проект или весь аккаунт. '
                     'При удалении аккаунта стираются учётная запись и все '
-                    'связанные файлы.',
+                    'связанные файлы. Если доступа к аккаунту нет — напишите '
+                    'нам, и мы удалим данные по запросу.',
               ),
+              section(
+                'Связь с нами',
+                'Вопросы, жалобы и запросы на удаление данных: '
+                    '${AppConstants.supportEmail}',
+              ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.tonalIcon(
+                  onPressed: () => openSupportMail(
+                    context,
+                    subject: 'Reelio AI — запрос на удаление данных',
+                  ),
+                  icon: const Icon(Icons.mail_outline_rounded),
+                  label: const Text('Написать в поддержку'),
+                ),
+              ),
+              const SizedBox(height: 24),
             ],
           ),
         ),
