@@ -8,7 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -184,6 +184,51 @@ describe('проверка содержимого материалов', () => {
       }),
       (e) => e instanceof ApiError && e.code === 'MEDIA_TOO_LONG',
     );
+  });
+
+  it('проверка не удаляет исходный файл пользователя', async (t) => {
+    if (!hasFfmpeg) return t.skip('ffmpeg недоступен');
+    // В local mode downloadToTemp отдаёт путь к НАСТОЯЩЕМУ файлу, а не копию.
+    // Если пометка владения потеряется, успешная проверка сотрёт исходник.
+    const path = await makeVideo('keep.mp4', 2);
+    const storage = {
+      ...fakeStorage({ 'users/u/projects/p/sources/a.mp4': path }),
+      async downloadToTemp() {
+        return { path, temporary: false };
+      },
+    };
+
+    const result = await validateProjectMedia({
+      assets: [{ id: 'a', type: 'video', objectPath: 'users/u/projects/p/sources/a.mp4' }],
+      storage,
+      limits: LIMITS,
+      ffprobePath: 'ffprobe',
+    });
+
+    assert.equal(result.byAssetId.a.type, 'video');
+    await assert.doesNotReject(stat(path), 'исходник обязан остаться на месте');
+  });
+
+  it('временная копия удаляется после проверки', async (t) => {
+    if (!hasFfmpeg) return t.skip('ffmpeg недоступен');
+    const source = await makeVideo('copy_src.mp4', 2);
+    const copy = join(dir, 'temp_copy.mp4');
+    await copyFile(source, copy);
+    const storage = {
+      ...fakeStorage({}),
+      async downloadToTemp() {
+        return { path: copy, temporary: true };
+      },
+    };
+
+    await validateProjectMedia({
+      assets: [{ id: 'a', type: 'video', objectPath: 'users/u/projects/p/sources/a.mp4' }],
+      storage,
+      limits: LIMITS,
+      ffprobePath: 'ffprobe',
+    });
+
+    await assert.rejects(stat(copy), 'временная копия не должна оставаться');
   });
 
   it('слишком много файлов отклоняется до чтения', async () => {

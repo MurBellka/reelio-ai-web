@@ -4,9 +4,12 @@
 // Ключи сервисных аккаунтов НЕ скачиваются и НЕ хранятся в репозитории (§8, §9).
 // Подписанный URL никогда не логируется.
 
+import { createWriteStream } from 'node:fs';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve, sep } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 
 class GcsStorage {
   constructor(bucket, config) {
@@ -80,6 +83,23 @@ class GcsStorage {
 
   async deleteObject(objectPath) {
     await this.bucket.file(objectPath).delete({ ignoreNotFound: true });
+  }
+
+  /**
+   * Скачивает начало объекта во временный файл для проверки содержимого.
+   *
+   * Ограничение по объёму обязательно: исходник может весить до двух
+   * гигабайт, а /tmp в Cloud Run живёт в памяти контейнера.
+   */
+  async downloadToTemp(objectPath, maxBytes) {
+    const dir = await mkdtemp(join(tmpdir(), 'reelio-probe-'));
+    const target = join(dir, basename(objectPath).replace(/[^\w.-]/g, '_'));
+    await pipeline(
+      this.bucket.file(objectPath).createReadStream({ start: 0, end: maxBytes - 1 }),
+      createWriteStream(target),
+    );
+    // temporary: копия наша, её обязан удалить вызывающий.
+    return { path: target, temporary: true };
   }
 
   /** Удаляет всё под префиксом. Возвращает число удалённых объектов. */
@@ -189,6 +209,14 @@ class LocalStorage {
 
   async deleteObject(objectPath) {
     await rm(this.pathFor(objectPath), { force: true });
+  }
+
+  /**
+   * В local mode объект уже лежит на диске — отдаём путь как есть и помечаем
+   * его как чужой, иначе вызывающий удалил бы файл пользователя.
+   */
+  async downloadToTemp(objectPath) {
+    return { path: this.pathFor(objectPath), temporary: false };
   }
 
   async deletePrefix(prefix) {

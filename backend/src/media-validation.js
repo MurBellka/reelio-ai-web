@@ -8,8 +8,16 @@
 // range-запросы, поэтому двухгигабайтный файл не нужно скачивать целиком.
 
 import { execFile } from 'node:child_process';
+import { rm } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { ApiError } from './errors.js';
+
+/**
+ * Сколько байт скачивать для распознавания. Заголовки контейнера лежат в
+ * начале файла (у MP4 с faststart — тем более), поэтому полный файл не нужен:
+ * он может весить до двух гигабайт и не поместится в память контейнера.
+ */
+const PROBE_BYTES = 24 * 1024 * 1024;
 
 const exec = promisify(execFile);
 
@@ -77,6 +85,9 @@ async function probe(url, { ffprobePath, timeoutMs }) {
     // Ограничиваем анализ: полный разбор длинного файла стоит времени.
     '-analyzeduration', '10M',
     '-probesize', '10M',
+    // Сетевой таймаут внутри самого ffprobe: иначе зависшее чтение молча
+    // висит до SIGTERM снаружи, и в stderr не остаётся ничего полезного.
+    '-rw_timeout', '20000000',
     url,
   ];
   try {
@@ -105,8 +116,17 @@ async function probe(url, { ffprobePath, timeoutMs }) {
  * дальше пользуется резолв разрешения — они берутся из файла, а не со слов
  * клиента.
  */
-export async function inspectAsset({ url, declaredType, limits, ffprobePath, timeoutMs = 60_000 }) {
-  const data = await probe(url, { ffprobePath, timeoutMs });
+export async function inspectAsset({
+  url,
+  localPath,
+  declaredType,
+  limits,
+  ffprobePath,
+  timeoutMs = 45_000,
+}) {
+  // Читаем локальную копию, если она есть: так проверка не зависит от того,
+  // как ffprobe работает с сетью в конкретном окружении.
+  const data = await probe(localPath || url, { ffprobePath, timeoutMs });
 
   const streams = Array.isArray(data.streams) ? data.streams : [];
   const video = streams.find((s) => s.codec_type === 'video');
@@ -184,10 +204,21 @@ export async function validateProjectMedia({ assets, storage, limits, ffprobePat
 
   for (const asset of assets) {
     let info;
+    let local = null;
     try {
-      const { url } = await storage.signedReadUrl(asset.objectPath, { ttlSeconds: 300 });
+      // Предпочитаем локальную копию: ffprobe по https в контейнере Cloud Run
+      // оказался ненадёжен (чтение зависало до принудительного завершения).
+      // Скачиваем ограниченный кусок — этого достаточно, чтобы распознать
+      // контейнер, кодек, кадр и длительность.
+      if (storage.downloadToTemp) {
+        local = await storage.downloadToTemp(asset.objectPath, PROBE_BYTES);
+      }
+      const signed = local
+        ? null
+        : await storage.signedReadUrl(asset.objectPath, { ttlSeconds: 300 });
       info = await inspectAsset({
-        url,
+        url: signed?.url,
+        localPath: local?.path,
         declaredType: asset.type,
         limits,
         ffprobePath,
@@ -199,6 +230,10 @@ export async function validateProjectMedia({ assets, storage, limits, ffprobePat
       throw err instanceof ApiError
         ? new ApiError(err.code, `«${asset.id}»: ${err.message}`, { field: `assets.${asset.id}` })
         : new ApiError('MEDIA_INVALID', `Материал «${asset.id}» не прошёл проверку.`);
+    } finally {
+      // Удаляем ТОЛЬКО свою временную копию: в local mode путь указывает на
+      // настоящий файл пользователя, и его трогать нельзя.
+      if (local?.temporary) await rm(local.path, { force: true }).catch(() => {});
     }
 
     totalBytes += info.sizeBytes;
