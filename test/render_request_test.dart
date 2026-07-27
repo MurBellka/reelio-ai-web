@@ -44,20 +44,22 @@ ProjectState projectWith(EditPlan? plan, {List<MediaAsset>? assets}) =>
 
 void main() {
   group('Пути объектов', () {
-    test('исходники лежат под projects/{projectId}/sources/', () {
-      final path = RenderAsset.sourceObjectPath(
+    test('исходники лежат под users/{uid}/projects/{projectId}/sources/', () {
+      final path = RenderAsset.proposedSourcePath(
+        ownerUid: 'u1',
         projectId: 'proj_9d1',
         asset: videoAsset,
       );
-      expect(path, 'projects/proj_9d1/sources/asset_a.mp4');
+      expect(path, 'users/u1/projects/proj_9d1/sources/asset_a.mp4');
     });
 
     test('расширение берётся из имени и приводится к нижнему регистру', () {
-      final path = RenderAsset.sourceObjectPath(
+      final path = RenderAsset.proposedSourcePath(
+        ownerUid: 'u1',
         projectId: 'proj_9d1',
         asset: photoAsset,
       );
-      expect(path, 'projects/proj_9d1/sources/asset_b.heic');
+      expect(path, 'users/u1/projects/proj_9d1/sources/asset_b.heic');
     });
 
     test('без расширения путь остаётся валидным', () {
@@ -68,8 +70,12 @@ void main() {
         type: MediaType.video,
       );
       expect(
-        RenderAsset.sourceObjectPath(projectId: 'p1', asset: noExt),
-        'projects/p1/sources/asset_c.mp4',
+        RenderAsset.proposedSourcePath(
+          ownerUid: 'u1',
+          projectId: 'p1',
+          asset: noExt,
+        ),
+        'users/u1/projects/p1/sources/asset_c.mp4',
       );
     });
   });
@@ -90,7 +96,13 @@ void main() {
         ),
       ]);
 
-      final request = RenderRequest.fromProject(projectWith(plan));
+      final request = RenderRequest.fromProject(
+        objectPathsByAssetId: const {
+          'asset_a': 'users/u1/projects/proj_9d1/sources/asset_a.mp4',
+          'asset_b': 'users/u1/projects/proj_9d1/sources/asset_b.heic',
+        },
+        projectWith(plan),
+      );
       final json = request.toJson();
 
       expect(json['contractVersion'], 1);
@@ -101,7 +113,10 @@ void main() {
       expect(assets, hasLength(1)); // отправляем только используемые материалы
       final asset = assets.single as Map;
       expect(asset['id'], 'asset_a');
-      expect(asset['objectPath'], 'projects/proj_9d1/sources/asset_a.mp4');
+      expect(
+        asset['objectPath'],
+        'users/u1/projects/proj_9d1/sources/asset_a.mp4',
+      );
       expect(asset['durationSeconds'], closeTo(41.2, 1e-9));
       expect(asset['width'], 1080);
     });
@@ -128,7 +143,13 @@ void main() {
         ),
       ]);
 
-      final request = RenderRequest.fromProject(projectWith(plan));
+      final request = RenderRequest.fromProject(
+        objectPathsByAssetId: const {
+          'asset_a': 'users/u1/projects/proj_9d1/sources/asset_a.mp4',
+          'asset_b': 'users/u1/projects/proj_9d1/sources/asset_b.heic',
+        },
+        projectWith(plan),
+      );
       final ids = request.assets.map((a) => a.id).toSet();
 
       for (final clip in request.plan.clips) {
@@ -150,7 +171,13 @@ void main() {
         ),
       ]);
 
-      final request = RenderRequest.fromProject(projectWith(plan));
+      final request = RenderRequest.fromProject(
+        objectPathsByAssetId: const {
+          'asset_a': 'users/u1/projects/proj_9d1/sources/asset_a.mp4',
+          'asset_b': 'users/u1/projects/proj_9d1/sources/asset_b.heic',
+        },
+        projectWith(plan),
+      );
       expect(request.plan.clips.single.mediaId, 'asset_a');
     });
 
@@ -169,6 +196,11 @@ void main() {
       ]);
 
       final request = RenderRequest.fromProject(
+        objectPathsByAssetId: const {
+          'asset_a': 'users/u1/projects/proj_9d1/sources/asset_a.mp4',
+          'asset_b': 'users/u1/projects/proj_9d1/sources/asset_b.heic',
+        },
+
         projectWith(plan),
         sizesByAssetId: const {'asset_a': 18234112},
       );
@@ -194,7 +226,13 @@ void main() {
         ),
       ], export: export);
 
-      final json = RenderRequest.fromProject(projectWith(plan)).toJson();
+      final json = RenderRequest.fromProject(
+        objectPathsByAssetId: const {
+          'asset_a': 'users/u1/projects/proj_9d1/sources/asset_a.mp4',
+          'asset_b': 'users/u1/projects/proj_9d1/sources/asset_b.heic',
+        },
+        projectWith(plan),
+      ).toJson();
       expect((json['export'] as Map)['resolution'], 'twoK1440');
       expect((json['export'] as Map)['fps'], 30);
     });
@@ -213,7 +251,13 @@ void main() {
         ),
       ], export: ExportSettings.defaults);
 
-      final json = RenderRequest.fromProject(projectWith(plan)).toJson();
+      final json = RenderRequest.fromProject(
+        objectPathsByAssetId: const {
+          'asset_a': 'users/u1/projects/proj_9d1/sources/asset_a.mp4',
+          'asset_b': 'users/u1/projects/proj_9d1/sources/asset_b.heic',
+        },
+        projectWith(plan),
+      ).toJson();
       expect((json['export'] as Map)['resolution'], 'maximumAvailable');
     });
   });
@@ -221,7 +265,13 @@ void main() {
   group('Проект не готов к рендеру', () {
     test('нет плана', () {
       expect(
-        () => RenderRequest.fromProject(projectWith(null)),
+        () => RenderRequest.fromProject(
+          objectPathsByAssetId: const {
+            'asset_a': 'users/u1/projects/proj_9d1/sources/asset_a.mp4',
+            'asset_b': 'users/u1/projects/proj_9d1/sources/asset_b.heic',
+          },
+          projectWith(null),
+        ),
         throwsA(isA<RenderRequestException>()),
       );
     });
@@ -238,7 +288,13 @@ void main() {
         ),
       ]);
       expect(
-        () => RenderRequest.fromProject(projectWith(plan, assets: const [])),
+        () => RenderRequest.fromProject(
+          objectPathsByAssetId: const {
+            'asset_a': 'users/u1/projects/proj_9d1/sources/asset_a.mp4',
+            'asset_b': 'users/u1/projects/proj_9d1/sources/asset_b.heic',
+          },
+          projectWith(plan, assets: const []),
+        ),
         throwsA(isA<RenderRequestException>()),
       );
     });
@@ -255,7 +311,13 @@ void main() {
         ),
       ]);
       expect(
-        () => RenderRequest.fromProject(projectWith(plan)),
+        () => RenderRequest.fromProject(
+          objectPathsByAssetId: const {
+            'asset_a': 'users/u1/projects/proj_9d1/sources/asset_a.mp4',
+            'asset_b': 'users/u1/projects/proj_9d1/sources/asset_b.heic',
+          },
+          projectWith(plan),
+        ),
         throwsA(isA<RenderRequestException>()),
       );
     });

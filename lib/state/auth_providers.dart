@@ -51,6 +51,17 @@ final authUserProvider = StreamProvider<AuthUser?>(
   (ref) => ref.watch(authServiceProvider).changes,
 );
 
+/// uid вошедшего пользователя или `null`.
+///
+/// Отдельный синхронный провайдер: он входит в путь объекта, а ждать поток
+/// состояния входа посреди сборки запроса неудобно и в тестах приводит к
+/// зависаниям. Здесь значение читается мгновенно и так же мгновенно
+/// подменяется в тестах.
+final currentUidProvider = Provider<String?>((ref) {
+  final user = ref.watch(authUserProvider).value;
+  return (user == null || user.uid.isEmpty) ? null : user.uid;
+});
+
 /// Готов ли пользователь пользоваться рендером: вошёл и подтвердил почту.
 final canRenderProvider = Provider<bool>((ref) {
   final user = ref.watch(authUserProvider).value;

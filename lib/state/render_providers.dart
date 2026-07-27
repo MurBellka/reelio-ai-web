@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import '../core/app_config.dart';
 
 import '../models/render_job.dart';
+import '../models/media_asset.dart';
+import '../models/project_state.dart';
 import '../models/render_request.dart';
 import '../models/upload_ticket.dart';
 import '../services/media_upload_service.dart';
@@ -317,9 +319,24 @@ class RenderController extends Notifier<RenderUiState> {
     final project = ref.read(projectProvider);
     final storage = ref.read(storageServiceProvider);
 
-    final RenderRequest draft;
+    // Владелец известен только после входа; путь без его uid backend
+    // отклонит — схему хранения задаёт сервер.
+    final ownerUid = ref.read(currentUidProvider) ?? '';
+    if (ownerUid.isEmpty) {
+      _fail(
+        const RenderError(
+          code: 'UNAUTHENTICATED',
+          message: 'Войдите в аккаунт, чтобы собрать ролик.',
+        ),
+      );
+      return;
+    }
+
+    // Материалы, которые действительно нужны плану. Сопоставление идёт по
+    // стабильному id — имена файлов для этого не годятся.
+    final List<MediaAsset> usedAssets;
     try {
-      draft = RenderRequest.fromProject(project);
+      usedAssets = _assetsUsedByPlan(project);
     } on RenderRequestException catch (e) {
       _fail(RenderError(code: 'PLAN_INVALID', message: e.message));
       return;
@@ -349,23 +366,41 @@ class RenderController extends Notifier<RenderUiState> {
         stage: RenderUiStage.uploading,
         upload: UploadProgress(
           completedFiles: 0,
-          totalFiles: draft.assets.length,
+          totalFiles: usedAssets.length,
         ),
       ),
     );
 
     try {
-      final usedAssets = [
-        for (final asset in project.assets)
-          if (draft.assets.any((a) => a.id == asset.id)) asset,
+      // Предлагаем путь с uid владельца; авторитетным станет тот, что вернёт
+      // сервер, — его и понесём дальше.
+      final proposed = [
+        for (final asset in usedAssets)
+          RenderAsset(
+            id: asset.id,
+            type: asset.type,
+            objectPath: RenderAsset.proposedSourcePath(
+              ownerUid: ownerUid,
+              projectId: project.id,
+              asset: asset,
+            ),
+            durationSeconds: asset.durationSeconds,
+            width: asset.width,
+            height: asset.height,
+          ),
       ];
 
       final tickets = await _api.requestUploadTickets(
-        projectId: draft.projectId,
-        assets: draft.assets,
+        projectId: project.id,
+        assets: proposed,
         contentTypes: MediaUploadService.contentTypesOf(usedAssets),
       );
       _throwIfCancelled();
+
+      // Пути берём ИЗ ОТВЕТА сервера: клиент их не изобретает.
+      final objectPaths = {
+        for (final ticket in tickets) ticket.assetId: ticket.objectPath,
+      };
 
       final sizes = await _uploads.uploadAll(
         assets: usedAssets,
@@ -381,7 +416,11 @@ class RenderController extends Notifier<RenderUiState> {
 
       _set(state.copyWith(stage: RenderUiStage.submitting));
 
-      final request = RenderRequest.fromProject(project, sizesByAssetId: sizes);
+      final request = RenderRequest.fromProject(
+        project,
+        objectPathsByAssetId: objectPaths,
+        sizesByAssetId: sizes,
+      );
       final job = await _api.submitRender(request);
       _throwIfCancelled();
 
@@ -412,6 +451,42 @@ class RenderController extends Notifier<RenderUiState> {
     } on RenderRequestException catch (e) {
       _fail(RenderError(code: 'PLAN_INVALID', message: e.message));
     }
+  }
+
+  /// Материалы, на которые ссылается план, в порядке проекта.
+  ///
+  /// Сопоставление идёт по стабильному mediaId; для планов, собранных до его
+  /// появления, есть запасной путь по локальному пути файла.
+  static List<MediaAsset> _assetsUsedByPlan(ProjectState project) {
+    final plan = project.plan;
+    if (plan == null) {
+      throw const RenderRequestException(
+        'Монтажный план ещё не готов — сначала дождитесь обработки.',
+      );
+    }
+    final byId = {for (final a in project.assets) a.id: a};
+    final byPath = {for (final a in project.assets) a.path: a};
+
+    final used = <String>{};
+    for (final clip in plan.clips) {
+      final asset = byId[clip.mediaId] ?? byPath[clip.filePath];
+      if (asset == null) {
+        throw RenderRequestException(
+          'Фрагмент «${clip.sourceName.isEmpty ? clip.id : clip.sourceName}» '
+          'ссылается на материал, которого больше нет в проекте.',
+        );
+      }
+      used.add(asset.id);
+    }
+    if (used.isEmpty) {
+      throw const RenderRequestException(
+        'В монтажном плане нет ни одного фрагмента.',
+      );
+    }
+    return [
+      for (final asset in project.assets)
+        if (used.contains(asset.id)) asset,
+    ];
   }
 
   /// Делает ошибку API понятной пользователю.

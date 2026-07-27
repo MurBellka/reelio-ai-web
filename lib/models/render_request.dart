@@ -38,25 +38,33 @@ class RenderAsset {
   final String? checksumCrc32c;
 
   /// Строит запись по локальному материалу, вычисляя путь объекта по §6.
+  /// Собирает запись для запроса.
+  ///
+  /// [objectPath] — обязателен и должен быть тем, что выдал backend в ответе
+  /// `/uploads`. Клиент не изобретает пути: схему хранения знает только
+  /// сервер, и в неё входит проверенный uid владельца.
   factory RenderAsset.fromMediaAsset(
     MediaAsset asset, {
-    required String projectId,
+    required String objectPath,
     int? sizeBytes,
   }) => RenderAsset(
     id: asset.id,
     type: asset.type,
-    objectPath: sourceObjectPath(projectId: projectId, asset: asset),
+    objectPath: objectPath,
     sizeBytes: sizeBytes,
     durationSeconds: asset.durationSeconds,
     width: asset.width,
     height: asset.height,
   );
 
-  /// `projects/{projectId}/sources/{assetId}.{ext}` (§6).
+  /// Путь, ПРЕДЛАГАЕМЫЙ в запросе `/uploads`: `users/{uid}/projects/{id}/…`.
   ///
-  /// Если расширение исходника определить не удалось, берётся безопасное
-  /// значение по типу материала — путь обязан оставаться валидным.
-  static String sourceObjectPath({
+  /// Только предложение — авторитетным считается путь из ответа сервера.
+  /// Имя файла берётся из стабильного идентификатора материала, а не из
+  /// пользовательского: так кириллица, пробелы и два одинаковых названия не
+  /// создают ни коллизий, ни недопустимых символов в пути.
+  static String proposedSourcePath({
+    required String ownerUid,
     required String projectId,
     required MediaAsset asset,
   }) {
@@ -64,7 +72,7 @@ class RenderAsset {
     final safeExt = ext.isNotEmpty
         ? ext
         : (asset.type == MediaType.video ? 'mp4' : 'jpg');
-    return 'projects/$projectId/sources/${asset.id}.$safeExt';
+    return 'users/$ownerUid/projects/$projectId/sources/${asset.id}.$safeExt';
   }
 
   Map<String, dynamic> toJson() => {
@@ -121,8 +129,14 @@ class RenderRequest {
   /// Бросает [RenderRequestException] с понятным сообщением, если проект ещё
   /// не готов к рендеру (нет плана, нет материалов, клип ссылается на
   /// удалённый материал).
+  /// Собирает запрос из состояния проекта.
+  ///
+  /// [objectPathsByAssetId] — пути, ВЫДАННЫЕ backend'ом в ответе `/uploads`.
+  /// Без них запрос не собирается: путь, придуманный клиентом, будет отвергнут
+  /// проверкой каталога, и пользователь потеряет время уже после загрузки.
   factory RenderRequest.fromProject(
     ProjectState project, {
+    required Map<String, String> objectPathsByAssetId,
     Map<String, int> sizesByAssetId = const {},
     String? idempotencyKey,
   }) {
@@ -166,15 +180,37 @@ class RenderRequest {
     }
 
     // Отправляем только те материалы, которые реально используются планом.
-    final assets = [
-      for (final asset in project.assets)
-        if (usedAssetIds.contains(asset.id))
-          RenderAsset.fromMediaAsset(
-            asset,
-            projectId: project.id,
-            sizeBytes: sizesByAssetId[asset.id],
-          ),
-    ];
+    // Каждый сопоставляется с загруженным объектом по стабильному id: имя
+    // файла для этого не годится — два файла могут называться одинаково.
+    final assets = <RenderAsset>[];
+    final missing = <String>[];
+    for (final asset in project.assets) {
+      if (!usedAssetIds.contains(asset.id)) continue;
+      final objectPath = objectPathsByAssetId[asset.id];
+      if (objectPath == null || objectPath.isEmpty) {
+        missing.add(asset.name.isEmpty ? asset.id : asset.name);
+        continue;
+      }
+      assets.add(
+        RenderAsset.fromMediaAsset(
+          asset,
+          objectPath: objectPath,
+          sizeBytes: sizesByAssetId[asset.id],
+        ),
+      );
+    }
+
+    if (missing.isNotEmpty) {
+      // Так выглядит проект, собранный до смены схемы хранения: материалы
+      // выбраны, но на сервер в нынешнем виде не загружены. Восстановить их
+      // самим нельзя — честнее попросить загрузить заново, чем отправить
+      // заведомо неверный путь и получить отказ после долгой выгрузки.
+      throw RenderRequestException(
+        'Материалы нужно загрузить заново: ${missing.take(3).join(', ')}'
+        '${missing.length > 3 ? ' и ещё ${missing.length - 3}' : ''}. '
+        'Вернитесь к шагу «Материалы» и добавьте их снова.',
+      );
+    }
 
     return RenderRequest(
       projectId: project.id,

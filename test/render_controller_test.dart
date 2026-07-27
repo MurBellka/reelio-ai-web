@@ -140,6 +140,9 @@ ProviderContainer containerFor(
 }) {
   final container = ProviderContainer(
     overrides: [
+      // Вошедший пользователь: без uid путь объекта не построить, и рендер
+      // честно откажется стартовать.
+      currentUidProvider.overrideWithValue('testuid'),
       // Гейт версии API: в тестах backend считаем уже обновлённым, иначе
       // проверка ушла бы в сеть и заблокировала бы рендер.
       backendVersionServiceProvider.overrideWith(
@@ -327,6 +330,7 @@ void main() {
     final backend = FakeBackend(jobStates: [_json(jobJson())]);
     final container = ProviderContainer(
       overrides: [
+        currentUidProvider.overrideWithValue('testuid'),
         // Гейт версии API: в тестах backend считаем уже обновлённым, иначе
         // проверка ушла бы в сеть и заблокировала бы рендер.
         backendVersionServiceProvider.overrideWith(
@@ -619,6 +623,7 @@ void main() {
     final backend = FakeBackend(jobStates: [_json(jobJson())]);
     final container = ProviderContainer(
       overrides: [
+        currentUidProvider.overrideWithValue('testuid'),
         // Гейт версии API: в тестах backend считаем уже обновлённым, иначе
         // проверка ушла бы в сеть и заблокировала бы рендер.
         backendVersionServiceProvider.overrideWith(
