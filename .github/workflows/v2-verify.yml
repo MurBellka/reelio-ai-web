@@ -48,19 +48,34 @@ jobs:
           ffmpeg -hide_banner -filters | grep -q ' subtitles ' \
             || (echo 'ffmpeg без libass' && exit 1)
 
+      # if: always() на каждом шаге — чтобы один упавший набор не скрывал
+      # состояние остальных двух. Иначе диагностика занимает по прогону на набор.
       - name: Production worker v1 не должен сломаться
+        id: v1
         working-directory: backend/worker
         run: npm test
 
       - name: worker-v2
+        if: always()
         working-directory: backend/worker-v2
         run: npm test
 
       - name: beta backend
+        if: always()
         working-directory: backend/beta
         run: |
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
           npm test
+
+      # Расхождения между сборками FFmpeg: печатает, ЧТО именно не сошлось.
+      # Запускается всегда — на зелёном прогоне это просто строка «пройдено».
+      - name: Диагностика рендера
+        if: always()
+        run: |
+          echo '--- worker v1 ---'
+          node tools/diagnose-render.mjs backend/worker || true
+          echo '--- worker-v2 ---'
+          node tools/diagnose-render.mjs backend/worker-v2 || true
 
   text-visible:
     name: Русский текст виден в кадрах (контейнер с libass)

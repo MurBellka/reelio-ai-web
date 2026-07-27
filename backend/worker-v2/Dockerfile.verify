@@ -26,16 +26,18 @@ WORKDIR /app
 COPY backend/worker-v2/package.json ./
 COPY backend/worker-v2/src/ ./src/
 COPY backend/worker-v2/tools/ ./tools/
-COPY assets/fonts/ /opt/reelio/fonts/
-RUN fc-cache -f /opt/reelio/fonts
+COPY assets/fonts/ /usr/share/fonts/truetype/reelio/
+# fc-cache без аргументов перечитывает все стандартные каталоги: fontconfig
+# сканирует только их, и шрифт вне такого каталога libass не найдёт по имени.
+RUN fc-cache -f
 
 # Проверка, что libass и шрифты на месте, — до запуска самой проверки.
 # Если ffmpeg собран без libass, дальше идти незачем.
 RUN ffmpeg -hide_banner -filters 2>/dev/null | grep -q ' subtitles ' \
  || (echo 'ffmpeg собран без libass — фильтр subtitles недоступен' && exit 1)
 RUN fc-list | grep -qi montserrat \
- || (echo 'шрифт Montserrat не найден в /opt/reelio/fonts' && exit 1)
+ || (echo 'шрифт Montserrat не найден в /usr/share/fonts/truetype/reelio' && exit 1)
 
-ENV REELIO_FONTS_DIR=/opt/reelio/fonts
+ENV REELIO_FONTS_DIR=/usr/share/fonts/truetype/reelio
 
 ENTRYPOINT ["node", "tools/verify-text-visible.mjs"]

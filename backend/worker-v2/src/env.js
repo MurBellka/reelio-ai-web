@@ -112,7 +112,7 @@ export function loadEnv(env = process.env) {
     ffmpegPath: env.FFMPEG_PATH || 'ffmpeg',
     ffprobePath: env.FFPROBE_PATH || 'ffprobe',
     // Каталог шрифтов §5: те же файлы, что использует web-превью.
-    fontsDir: env.REELIO_FONTS_DIR || '/opt/reelio/fonts',
+    fontsDir: env.REELIO_FONTS_DIR || '/usr/share/fonts/truetype/reelio',
 
     // Поведение пайплайна.
     workDir: env.REELIO_WORK_DIR || '',

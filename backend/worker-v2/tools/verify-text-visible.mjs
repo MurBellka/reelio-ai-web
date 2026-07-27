@@ -34,7 +34,7 @@ import { buildTimeline } from '../src/timeline.js';
 import { buildVerifiedCatalog } from '../src/transitions.js';
 
 const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
-const FONTS_DIR = process.env.REELIO_FONTS_DIR || '/opt/reelio/fonts';
+const FONTS_DIR = process.env.REELIO_FONTS_DIR || '/usr/share/fonts/truetype/reelio';
 
 const WIDTH = 360;
 const HEIGHT = 640;

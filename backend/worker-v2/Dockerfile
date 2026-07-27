@@ -36,8 +36,10 @@ COPY backend/worker-v2/package.json ./
 COPY backend/worker-v2/src/ ./src/
 
 # Каталог шрифтов §5 — тот же, что отдаётся web-клиенту.
-COPY assets/fonts/ /opt/reelio/fonts/
-RUN fc-cache -f /opt/reelio/fonts
+COPY assets/fonts/ /usr/share/fonts/truetype/reelio/
+# fc-cache без аргументов перечитывает все стандартные каталоги: fontconfig
+# сканирует только их, и шрифт вне такого каталога libass не найдёт по имени.
+RUN fc-cache -f
 
 # Непривилегированный пользователь: worker'у не нужен root ни для чего.
 RUN useradd --system --uid 10001 --create-home --home-dir /home/worker worker \
@@ -48,7 +50,7 @@ USER worker
 
 ENV NODE_ENV=production \
     REELIO_WORK_DIR=/work \
-    REELIO_FONTS_DIR=/opt/reelio/fonts \
+    REELIO_FONTS_DIR=/usr/share/fonts/truetype/reelio \
     REELIO_LOG_LEVEL=info
 
 ENTRYPOINT ["/usr/bin/tini", "--", "node", "src/index.js"]
