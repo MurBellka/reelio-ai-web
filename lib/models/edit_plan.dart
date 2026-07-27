@@ -131,6 +131,22 @@ class EditClip {
   /// Имя исходного файла для отображения в редакторе.
   final String sourceName;
 
+  /// Проставляет ссылку на материал, если она потерялась (старые черновики).
+  EditClip withMediaId(String value) => value == mediaId
+      ? this
+      : EditClip(
+          id: id,
+          filePath: filePath,
+          type: type,
+          duration: duration,
+          transition: transition,
+          start: start,
+          end: end,
+          sourceName: sourceName,
+          mediaId: value,
+          reason: reason,
+        );
+
   EditClip copyWith({double? duration, String? transition}) => EditClip(
     id: id,
     filePath: filePath,

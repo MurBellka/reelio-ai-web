@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/router.dart';
 import '../../models/enums.dart';
+import '../../shared/profile_button.dart';
 import '../../shared/app_background.dart';
 import '../../shared/premium_widgets.dart';
 import '../../shared/stage_progress.dart';
@@ -62,7 +63,10 @@ class _EditSettingsScreenState extends ConsumerState<EditSettingsScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Настройки монтажа')),
+      appBar: AppBar(
+        title: const Text('Настройки монтажа'),
+        actions: const [ProfileButton()],
+      ),
       extendBodyBehindAppBar: true,
       body: AppBackground(
         child: SafeArea(

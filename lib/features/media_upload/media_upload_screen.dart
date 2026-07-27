@@ -9,6 +9,7 @@ import '../../core/media_validation.dart';
 import '../../models/enums.dart';
 import '../../models/media_asset.dart';
 import '../../services/media_picker_service.dart';
+import '../../shared/profile_button.dart';
 import '../../shared/app_background.dart';
 import '../../shared/fullscreen_media.dart';
 import '../../shared/media_thumbnail.dart';
@@ -147,7 +148,10 @@ class _MediaUploadScreenState extends ConsumerState<MediaUploadScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Материалы')),
+      appBar: AppBar(
+        title: const Text('Материалы'),
+        actions: const [ProfileButton()],
+      ),
       extendBodyBehindAppBar: true,
       body: AppBackground(
         child: SafeArea(

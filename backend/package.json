@@ -1,19 +1,27 @@
 {
   "name": "reelio-backend",
-  "version": "1.0.0",
-  "description": "Reelio AI secure backend — calls Gemini to build an edit plan. Never exposes the API key to the client.",
+  "version": "2.0.0",
+  "description": "Reelio AI secure backend — Gemini edit plans and render job coordination (see docs/render-contract.md).",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node --test test/"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
-    "express-rate-limit": "^7.4.0"
+    "express-rate-limit": "^7.4.0",
+    "ffprobe-static": "^3.1.0",
+    "firebase-admin": "^14.2.0"
+  },
+  "optionalDependencies": {
+    "@google-cloud/firestore": "^7.10.0",
+    "@google-cloud/storage": "^7.14.0",
+    "google-auth-library": "^9.14.1"
   }
 }

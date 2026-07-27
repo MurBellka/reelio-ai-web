@@ -29,3 +29,19 @@ void downloadTextFile(
   // Освобождаем временный URL чуть позже, чтобы не прервать загрузку.
   Timer(const Duration(seconds: 4), () => web.URL.revokeObjectURL(url));
 }
+
+/// Скачивает файл по готовой ссылке (signed URL результата рендера).
+///
+/// Атрибут `download` действует только для same-origin ответов, поэтому для
+/// кросс-доменного signed URL имя файла задаёт сервер через
+/// `Content-Disposition`; браузер в любом случае скачает, а не откроет MP4.
+void openDownloadUrl(String url, String filename) {
+  final anchor = web.document.createElement('a') as web.HTMLAnchorElement
+    ..href = url
+    ..download = filename
+    ..rel = 'noopener'
+    ..style.display = 'none';
+  web.document.body!.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}

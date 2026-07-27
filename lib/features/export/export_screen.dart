@@ -5,15 +5,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/app_config.dart';
 import '../../core/formatters.dart';
 import '../../core/platform/file_ops.dart';
 import '../../core/theme.dart';
 import '../../models/enums.dart';
 import '../../models/export_settings.dart';
+import '../../shared/profile_button.dart';
 import '../../shared/app_background.dart';
 import '../../shared/premium_widgets.dart';
 import '../../shared/stage_progress.dart';
 import '../../state/providers.dart';
+import '../../state/render_providers.dart';
+import '../render/render_section.dart';
 
 class ExportScreen extends ConsumerStatefulWidget {
   const ExportScreen({super.key});
@@ -27,7 +31,12 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
 
   String _fileName() => Formatters.editPlanFileName(DateTime.now());
 
+  /// Пока идёт рендер, менять качество нельзя: задача уже собирается с ним.
+  bool get _renderLocked =>
+      AppConfig.hasBackend && ref.read(renderControllerProvider).isBusy;
+
   void _selectResolution(ExportResolution choice) {
+    if (_renderLocked) return;
     final project = ref.read(projectProvider);
     final plan = project.plan;
     if (plan == null) return;
@@ -161,9 +170,15 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     }
 
     final export = plan.export;
+    final hasRender = AppConfig.hasBackend;
+    final renderLocked =
+        hasRender && ref.watch(renderControllerProvider).isBusy;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Экспорт')),
+      appBar: AppBar(
+        title: const Text('Экспорт'),
+        actions: const [ProfileButton()],
+      ),
       extendBodyBehindAppBar: true,
       body: AppBackground(
         child: SafeArea(
@@ -195,7 +210,9 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                               r.isAuto ? r.label : '${r.label} · ${r.height}p',
                             ),
                             selected: export.resolution == r,
-                            onSelected: (_) => _selectResolution(r),
+                            onSelected: renderLocked
+                                ? null
+                                : (_) => _selectResolution(r),
                           ),
                       ],
                     ),
@@ -249,44 +266,65 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    SoftCard(
-                      color: theme.colorScheme.secondaryContainer,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(
-                            Icons.info_outline_rounded,
-                            color: theme.colorScheme.primary,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'Экспорт сохраняет монтажный план (JSON) с выбранным '
-                              'разрешением. Тяжёлый рендеринг MP4 выполняется на '
-                              'сервере, а не в браузере, — он подключается отдельно.',
-                              style: theme.textTheme.bodyMedium,
-                            ),
-                          ),
-                        ],
+                    const SizedBox(height: 20),
+                    if (hasRender) ...[
+                      const SectionHeader(
+                        title: 'Рендер MP4',
+                        subtitle:
+                            'Материалы загружаются напрямую в хранилище, '
+                            'видео собирает сервер',
                       ),
-                    ),
+                      const SizedBox(height: 12),
+                      const RenderSection(),
+                    ] else
+                      SoftCard(
+                        color: theme.colorScheme.secondaryContainer,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.info_outline_rounded,
+                              color: theme.colorScheme.primary,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Демо-режим: экспорт сохраняет монтажный план '
+                                '(JSON) с выбранным разрешением. Настоящий MP4 '
+                                'собирает сервер — укажите адрес backend, чтобы '
+                                'включить рендер.',
+                                style: theme.textTheme.bodyMedium,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                child: GradientButton(
-                  label: _exporting
-                      ? 'Готовим план…'
-                      : (kIsWeb
-                            ? 'Скачать план (JSON)'
-                            : 'Экспортировать план'),
-                  icon: kIsWeb
-                      ? Icons.download_rounded
-                      : Icons.ios_share_rounded,
-                  onPressed: _exporting ? null : _export,
-                ),
+                child: hasRender
+                    ? TextButton.icon(
+                        onPressed: _exporting ? null : _export,
+                        icon: const Icon(Icons.description_outlined),
+                        label: Text(
+                          _exporting
+                              ? 'Готовим план…'
+                              : 'Скачать монтажный план (JSON)',
+                        ),
+                      )
+                    : GradientButton(
+                        label: _exporting
+                            ? 'Готовим план…'
+                            : (kIsWeb
+                                  ? 'Скачать план (JSON)'
+                                  : 'Экспортировать план'),
+                        icon: kIsWeb
+                            ? Icons.download_rounded
+                            : Icons.ios_share_rounded,
+                        onPressed: _exporting ? null : _export,
+                      ),
               ),
             ],
           ),

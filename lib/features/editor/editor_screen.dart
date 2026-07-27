@@ -6,6 +6,7 @@ import '../../core/theme.dart';
 import '../../models/edit_plan.dart';
 import '../../models/enums.dart';
 import '../../models/media_asset.dart';
+import '../../shared/profile_button.dart';
 import '../../shared/app_background.dart';
 import '../../shared/media_thumbnail.dart';
 import '../../shared/premium_widgets.dart';
@@ -83,7 +84,10 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     final captions = plan.captions;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Правки')),
+      appBar: AppBar(
+        title: const Text('Правки'),
+        actions: const [ProfileButton()],
+      ),
       extendBodyBehindAppBar: true,
       body: AppBackground(
         child: SafeArea(
