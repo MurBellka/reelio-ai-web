@@ -55,7 +55,11 @@ export const config = {
   limits: {
     userDailyCredits: int('LIMIT_USER_DAILY_CREDITS', 4),
     globalDailyCredits: int('LIMIT_GLOBAL_DAILY_CREDITS', 40),
-    ipDailyCredits: int('LIMIT_IP_DAILY_CREDITS', 8),
+    // Лимит по IP — страховка от массовой регистрации, а не основной барьер
+    // (им служат подтверждение почты и лимит на пользователя). Значение 8
+    // было слишком жёстким: за одним NAT (офис, мобильный оператор, вуз)
+    // сидит много разных людей, и двое активных исчерпали бы его к обеду.
+    ipDailyCredits: int('LIMIT_IP_DAILY_CREDITS', 20),
     maxActiveJobsPerUser: int('LIMIT_ACTIVE_JOBS_USER', 1),
     maxActiveJobsGlobal: int('LIMIT_ACTIVE_JOBS_GLOBAL', 3),
     editPlanDaily: int('LIMIT_EDIT_PLAN_DAILY', 10),
