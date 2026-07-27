@@ -32,6 +32,17 @@ async function resolveFfprobe(preferred) {
   for (const candidate of candidates) {
     try {
       await exec(candidate, ['-version'], { timeout: 10_000 });
+      // Сборка обязана уметь https: файл читается по подписанной ссылке.
+      // Без этого протокола probe падает с пустым stderr, что выглядит как
+      // «битый файл» и уводит диагностику в сторону.
+      let httpsOk = false;
+      try {
+        const { stdout } = await exec(candidate, ['-protocols'], { timeout: 10_000 });
+        httpsOk = /^\s*https\s*$/m.test(stdout);
+      } catch {
+        // Список протоколов недоступен — пойдём дальше и узнаем на практике.
+      }
+      console.log(`[media] ffprobe=${candidate} https=${httpsOk}`);
       resolvedFfprobe = candidate;
       return candidate;
     } catch {
@@ -75,7 +86,13 @@ async function probe(url, { ffprobePath, timeoutMs }) {
     });
     return JSON.parse(stdout);
   } catch (err) {
-    // Ни stderr ffprobe, ни сама ссылка наружу не уходят: в ссылке подпись.
+    // Клиенту — общая формулировка: подробности ffprobe ему не нужны, а в
+    // ссылке подпись. Но в лог причину писать НУЖНО: без неё поломка
+    // окружения (нет протокола, нет доступа) неотличима от битого файла.
+    const detail = String(err?.stderr || err?.stdout || `exit=${err?.code} ${err?.message}` || 'unknown')
+      .replace(/https?:\/\/[^\s'"]+/g, '<url-redacted>')
+      .slice(0, 300);
+    console.warn(`[media] ffprobe failed: ${detail}`);
     throw new ApiError(
       'MEDIA_INVALID',
       'Файл не удалось прочитать: возможно, он повреждён или это не медиафайл.',
