@@ -14,6 +14,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:reelio_ai/models/edit_plan.dart';
@@ -24,6 +25,8 @@ import 'package:reelio_ai/models/render_job.dart';
 import 'package:reelio_ai/models/render_request.dart';
 import 'package:reelio_ai/services/gemini_ai_editing_service.dart';
 import 'package:reelio_ai/services/render_api_client.dart';
+import 'package:reelio_ai/state/auth_providers.dart';
+import 'package:reelio_ai/state/render_providers.dart';
 
 /// Токены живого пользователя, полученные снаружи и переданные в тест.
 class _LiveTokens implements AuthTokens {
@@ -98,11 +101,16 @@ void main() {
         fail('нет LIVE_* окружения');
       }
 
-      final api = RenderApiClient(
-        baseUrl: baseUrl,
-        tokens: _LiveTokens(idToken),
-        maxRetries: 1,
+      // Клиент берётся ИЗ ПРОВАЙДЕРА, а не собирается руками: hotfix 2 был
+      // именно в проводке, и ручная сборка такой дефект не поймала бы.
+      final container = ProviderContainer(
+        overrides: [
+          authTokensProvider.overrideWith((ref) => _LiveTokens(idToken)),
+          renderBaseUrlProvider.overrideWith((ref) => baseUrl),
+        ],
       );
+      addTearDown(container.dispose);
+      final api = container.read(renderApiClientProvider);
 
       final request = RenderRequest(
         projectId: projectId,
