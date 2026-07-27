@@ -1,0 +1,15 @@
+{
+  "name": "reelio-backend-beta",
+  "version": "1.0.0",
+  "description": "Reelio AI beta backend — анализ материалов и сборка EditPlan v2. Без фоновой музыки.",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:unit": "node --test \"test/unit/*.test.js\"",
+    "test:e2e": "node --test \"test/e2e/*.test.js\""
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {}
+}
