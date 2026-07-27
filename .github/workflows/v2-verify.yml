@@ -1,0 +1,82 @@
+# Проверки ветки v2. Ничего не деплоит и не публикует.
+#
+# §7 итерации 3: контейнерный тест доказывает, что русский TextOverlay
+# ФИЗИЧЕСКИ виден в кадрах готового MP4. Одних тестов генерации ASS
+# недостаточно: между корректным .ass и видимой надписью стоит libass, поиск
+# шрифта и отрисовка кириллицы — всё это ломается молча.
+#
+# Облачные секреты этому workflow не нужны и не запрашиваются: сборка образа и
+# рендер синтетического ролика происходят целиком внутри runner'а.
+
+name: v2 verify
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/worker-v2/**'
+      - 'backend/beta/**'
+      - 'assets/fonts/**'
+      - 'docs/render-contract-v2.md'
+      - '.github/workflows/v2-verify.yml'
+  push:
+    branches: [reels-editor-v2]
+  workflow_dispatch:
+
+# Ни одного разрешения на запись: workflow только проверяет.
+permissions:
+  contents: read
+
+jobs:
+  node-tests:
+    name: Тесты (worker v1, worker-v2, beta)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ffmpeg из репозиториев Ubuntu собран с libass и libx264 — этого
+      # достаточно и для e2e рендера, и для проверки текста.
+      - name: Установить ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -hide_banner -version | head -1
+          ffmpeg -hide_banner -filters | grep -q ' subtitles ' \
+            || (echo 'ffmpeg без libass' && exit 1)
+
+      - name: Production worker v1 не должен сломаться
+        working-directory: backend/worker
+        run: npm test
+
+      - name: worker-v2
+        working-directory: backend/worker-v2
+        run: npm test
+
+      - name: beta backend
+        working-directory: backend/beta
+        run: |
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npm test
+
+  text-visible:
+    name: Русский текст виден в кадрах (контейнер с libass)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Сборка образа локально, без реестра и без push: образ нужен только
+      # чтобы запустить проверку в тех же условиях, что и рабочий worker.
+      - name: Собрать образ проверки
+        run: docker build -f backend/worker-v2/Dockerfile.verify -t reelio-worker-v2-verify .
+
+      # Внутри образа Dockerfile.verify уже проверил наличие libass и шрифта;
+      # здесь запускается сама пиксельная проверка.
+      - name: Проверить видимость русского текста
+        run: docker run --rm reelio-worker-v2-verify
+
+      - name: Собрать рабочий образ worker-v2
+        run: docker build -f backend/worker-v2/Dockerfile -t reelio-ffmpeg-worker-v2 .
