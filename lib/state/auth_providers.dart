@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../core/app_config.dart';
 import '../services/auth_service.dart';
+import '../services/backend_version_service.dart';
 import '../services/render_api_client.dart';
 
 /// Мост между [AuthService] и API-клиентом: клиент не знает про Firebase.
@@ -20,6 +21,20 @@ class FirebaseAuthTokens implements AuthTokens {
   @override
   Future<String?> appCheckToken() => _auth.appCheckToken();
 }
+
+/// Проверка поколения API. Живёт всё время работы приложения: у неё свой
+/// короткий кэш, повторное создание сбрасывало бы его на каждом экране.
+final backendVersionServiceProvider = Provider<BackendVersionService>((ref) {
+  final service = BackendVersionService();
+  ref.onDispose(service.close);
+  return service;
+});
+
+/// Готовность backend'а принимать материалы. Проверяется перед загрузкой и
+/// перед рендером.
+final backendStatusProvider = FutureProvider<BackendStatus>(
+  (ref) => ref.watch(backendVersionServiceProvider).check(),
+);
 
 final authServiceProvider = Provider<AuthService>((ref) {
   final service = AuthService();

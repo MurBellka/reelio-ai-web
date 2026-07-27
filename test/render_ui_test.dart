@@ -13,6 +13,8 @@ import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/models/export_settings.dart';
 import 'package:reelio_ai/models/media_asset.dart';
 import 'package:reelio_ai/services/media_upload_service.dart';
+import 'package:reelio_ai/services/backend_version_service.dart';
+import 'package:reelio_ai/state/auth_providers.dart';
 import 'package:reelio_ai/services/render_api_client.dart';
 import 'package:reelio_ai/state/providers.dart';
 import 'package:reelio_ai/state/render_providers.dart';
@@ -102,6 +104,20 @@ Future<http.Response> Function(http.Request) backendWith(
 ProviderContainer containerFor(List<http.Response> jobStates) {
   final container = ProviderContainer(
     overrides: [
+      // Гейт версии API: в тестах backend считаем уже обновлённым, иначе
+      // проверка ушла бы в сеть и заблокировала бы рендер.
+      backendVersionServiceProvider.overrideWith(
+        (ref) => BackendVersionService(
+          baseUrl: _base,
+          client: MockClient(
+            (_) async => http.Response(
+              '{"ok":true,"apiVersion":2,"authRequired":true}',
+              200,
+              headers: {'content-type': 'application/json'},
+            ),
+          ),
+        ),
+      ),
       renderApiClientProvider.overrideWith(
         (ref) => RenderApiClient(
           baseUrl: _base,

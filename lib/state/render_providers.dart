@@ -6,6 +6,8 @@ import '../models/render_job.dart';
 import '../models/render_request.dart';
 import '../models/upload_ticket.dart';
 import '../services/media_upload_service.dart';
+import 'auth_providers.dart';
+import '../services/backend_version_service.dart';
 import '../services/render_api_client.dart';
 import 'providers.dart';
 
@@ -245,6 +247,9 @@ class RenderController extends Notifier<RenderUiState> {
   }
 
   RenderApiClient get _api => ref.read(renderApiClientProvider);
+
+  /// Проверка поколения API перед отправкой материалов.
+  BackendVersionService get _version => ref.read(backendVersionServiceProvider);
   MediaUploadService get _uploads => ref.read(mediaUploadServiceProvider);
   RenderPollConfig get _pollConfig => ref.read(renderPollConfigProvider);
 
@@ -290,6 +295,25 @@ class RenderController extends Notifier<RenderUiState> {
       draft = RenderRequest.fromProject(project);
     } on RenderRequestException catch (e) {
       _fail(RenderError(code: 'PLAN_INVALID', message: e.message));
+      return;
+    }
+
+    // Проверяем поколение API ДО отправки файлов. Старый и новый backend
+    // несовместимы по авторизации: материалы, ушедшие не туда, были бы
+    // отвергнуты уже после выгрузки — впустую потраченный трафик и время.
+    final status = await _version.check();
+    if (!status.canSubmitWork) {
+      _fail(
+        RenderError(
+          code: status.readiness == BackendReadiness.updating
+              ? 'SERVICE_UPDATING'
+              : 'SERVICE_UNREACHABLE',
+          message: status.readiness == BackendReadiness.updating
+              ? 'Обновляем сервис, попробуйте через несколько минут.'
+              : 'Сервис недоступен. Проверьте подключение и попробуйте ещё раз.',
+          retryable: true,
+        ),
+      );
       return;
     }
 

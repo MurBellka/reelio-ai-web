@@ -10,6 +10,12 @@ function int(name, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+/**
+ * Поколение API. Версия 2 требует входа: анонимные запросы отклоняются.
+ * Версия 1 (до публичной беты) признака не отдавала вовсе.
+ */
+export const API_VERSION = 2;
+
 const bucket = process.env.RENDER_BUCKET || '';
 const jobName = process.env.RENDER_JOB_NAME || '';
 
@@ -168,6 +174,17 @@ export function healthSnapshot(cfg = config) {
     ok: true,
     service: 'reelio-backend',
     contractVersion: 1,
+
+    // Признак поколения API. Старая версия его вообще не отдаёт, поэтому
+    // клиент отличает «сервис ещё не обновлён» от «сеть сломалась»: у первого
+    // ответ валиден, просто без apiVersion.
+    //
+    // Нужен для безопасного переключения: старый и новый backend несовместимы
+    // по авторизации, и клиент, отправивший материалы не туда, получил бы 404
+    // или 401 уже после загрузки файлов.
+    apiVersion: API_VERSION,
+    authRequired: true,
+
     demo: !cfg.gemini.apiKey,
     render: {
       configured: cfg.render.mode === 'cloud',
