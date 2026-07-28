@@ -8,6 +8,7 @@ import '../models/enums.dart';
 import '../models/export_settings.dart';
 import '../models/media_asset.dart';
 import '../models/project_state.dart';
+import '../models/transition.dart';
 import '../services/ai_editing_service.dart';
 import 'auth_providers.dart';
 import '../services/gemini_ai_editing_service.dart';
@@ -185,6 +186,16 @@ class ProjectController extends Notifier<ProjectState> {
     final list = [...plan.clips];
     final at = index.clamp(0, list.length);
     list.insert(at, clip);
+    _emit(state.copyWith(plan: plan.copyWith(clips: list)));
+  }
+
+  /// Меняет переход конкретного клипа. Хранится строкой каталога v2 (§2.1);
+  /// длительность и интенсивность worker берёт по умолчанию.
+  void setClipTransition(int index, TransitionType type) {
+    final plan = state.plan;
+    if (plan == null || index < 0 || index >= plan.clips.length) return;
+    final list = [...plan.clips];
+    list[index] = list[index].copyWith(transition: type.storageValue);
     _emit(state.copyWith(plan: plan.copyWith(clips: list)));
   }
 

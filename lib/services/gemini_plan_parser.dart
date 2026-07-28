@@ -6,10 +6,8 @@ import '../models/edit_request.dart';
 import '../models/enums.dart';
 import '../models/export_settings.dart';
 import '../models/media_asset.dart';
+import '../models/transition.dart';
 import 'ai_editing_service.dart';
-
-/// Разрешённые типы переходов (allowlist).
-const _allowedTransitions = {'cut', 'fade', 'crossfade', 'slide'};
 
 EditStyle _styleFrom(String? v) => switch (v) {
   'dynamic' || 'dynamicStyle' => EditStyle.dynamicStyle,
@@ -90,7 +88,7 @@ EditPlan parseGeminiPlan(
         duration: double.parse(duration.toStringAsFixed(2)),
         start: asset.isVideo ? start : null,
         end: asset.isVideo ? start + duration : null,
-        transition: _allowedTransitions.contains(transition)
+        transition: TransitionType.isKnownStorage(transition)
             ? transition
             : 'cut',
         sourceName: asset.name,
