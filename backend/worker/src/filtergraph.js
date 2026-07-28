@@ -305,7 +305,15 @@ export function buildRenderCommand(opts) {
   let voiceLabel = audioAcc;
 
   if (hasSpeech && capabilities.loudnorm) {
-    filters.push(`[${voiceLabel}]loudnorm=I=${LOUDNESS_TARGET_LUFS}:TP=-1.5:LRA=11[vo]`);
+    // loudnorm выдаёт поток на 192 кГц (внутренняя частота EBU R128). Если
+    // оставить его как есть, весь последующий звуковой тракт — asplit,
+    // sidechaincompress, amix — тоже уходит на 192 кГц. В FFmpeg 6.1 amix на
+    // 192 кГц теряет ~2.9 с ведущего звука (latency loudnorm не компенсируется),
+    // и на роликах короче ~3 с аудиопоток пропадает целиком: ffmpeg завершается
+    // с кодом 0, но в MP4 нет звука. Возвращаем 48 кГц сразу, чтобы граф
+    // оставался на частоте проекта. FFmpeg 7+ этим не страдает, поэтому на macOS
+    // (сборка новее) баг не проявлялся.
+    filters.push(`[${voiceLabel}]loudnorm=I=${LOUDNESS_TARGET_LUFS}:TP=-1.5:LRA=11,aresample=48000[vo]`);
     voiceLabel = 'vo';
   } else if (hasSpeech) {
     notes.push('loudnorm-unavailable: speech left unnormalized');

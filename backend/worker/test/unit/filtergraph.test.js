@@ -206,6 +206,22 @@ test('ducking использует параметры, зафиксирован�
   assert.match(graph, /\[mus\]\[voice_sc\]sidechaincompress/);
 });
 
+test('после loudnorm голос возвращается на 48 кГц перед даккингом (регресс §2)', () => {
+  // loudnorm выдаёт 192 кГц. Если не привести голос обратно к 48 кГц, весь
+  // тракт asplit→sidechaincompress→amix уходит на 192 кГц, и FFmpeg 6.1 теряет
+  // ~2.9 с ведущего звука: на роликах короче ~3 с аудиопоток пропадает целиком
+  // (ffmpeg завершается кодом 0, но в MP4 нет звука), а на длинных звук молча
+  // усечён. Голосовая шина обязана вернуться на 48 кГц сразу за loudnorm.
+  const { graph } = build({}, { musicInput: { inputArgs: ['-i', 'm.m4a'], label: 'chill' } });
+  assert.match(
+    graph,
+    /loudnorm=I=-16:TP=-1\.5:LRA=11,aresample=48000\[vo\]/,
+    'выход loudnorm должен быть ресемплирован к 48 кГц до asplit/amix',
+  );
+  // Ветвь даккинга питается уже приведённым к 48 кГц голосом.
+  assert.match(graph, /\[vo\]asplit=2\[voice_main\]\[voice_sc\]/);
+});
+
 test('без речи ducking не включается — приглушать нечего', () => {
   const { graph } = build(
     {},
