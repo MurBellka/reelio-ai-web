@@ -1,5 +1,6 @@
 import 'enums.dart';
 import 'export_settings.dart';
+import 'text_overlay.dart';
 
 /// Настройки субтитров в монтажном плане.
 class CaptionSettings {
@@ -195,6 +196,7 @@ class EditPlan {
     required this.captions,
     required this.audio,
     required this.clips,
+    this.textOverlays = const [],
     this.coverClipId,
     this.export = ExportSettings.defaults,
   });
@@ -206,6 +208,9 @@ class EditPlan {
   final CaptionSettings captions;
   final AudioSettings audio;
   final List<EditClip> clips;
+
+  /// Текстовые слои поверх ролика (§4). До 20 элементов.
+  final List<TextOverlay> textOverlays;
 
   /// Идентификатор клипа, выбранного как обложка.
   final String? coverClipId;
@@ -221,6 +226,7 @@ class EditPlan {
     List<EditClip>? clips,
     CaptionSettings? captions,
     AudioSettings? audio,
+    List<TextOverlay>? textOverlays,
     String? coverClipId,
     ExportSettings? export,
   }) => EditPlan(
@@ -231,6 +237,7 @@ class EditPlan {
     captions: captions ?? this.captions,
     audio: audio ?? this.audio,
     clips: clips ?? this.clips,
+    textOverlays: textOverlays ?? this.textOverlays,
     coverClipId: coverClipId ?? this.coverClipId,
     export: export ?? this.export,
   );
@@ -245,6 +252,7 @@ class EditPlan {
     'coverClipId': coverClipId,
     'export': export.toJson(),
     'clips': clips.map((c) => c.toJson()).toList(),
+    'textOverlays': textOverlays.map((t) => t.toJson()).toList(),
   };
 
   factory EditPlan.fromJson(Map<String, dynamic> json) => EditPlan(
@@ -266,6 +274,9 @@ class EditPlan {
           ),
     clips: (json['clips'] as List)
         .map((e) => EditClip.fromJson((e as Map).cast<String, dynamic>()))
+        .toList(),
+    textOverlays: (json['textOverlays'] as List? ?? [])
+        .map((e) => TextOverlay.fromJson((e as Map).cast<String, dynamic>()))
         .toList(),
   );
 }

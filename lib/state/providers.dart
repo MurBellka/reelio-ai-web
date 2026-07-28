@@ -8,6 +8,7 @@ import '../models/enums.dart';
 import '../models/export_settings.dart';
 import '../models/media_asset.dart';
 import '../models/project_state.dart';
+import '../models/text_overlay.dart';
 import '../models/transition.dart';
 import '../services/ai_editing_service.dart';
 import 'auth_providers.dart';
@@ -197,6 +198,61 @@ class ProjectController extends Notifier<ProjectState> {
     final list = [...plan.clips];
     list[index] = list[index].copyWith(transition: type.storageValue);
     _emit(state.copyWith(plan: plan.copyWith(clips: list)));
+  }
+
+  // --- Текстовые слои (§4) -------------------------------------------------
+
+  /// Потолок числа слоёв из контракта §4.
+  static const int maxTextOverlays = 20;
+
+  /// Добавляет слой, если не превышен потолок. Возвращает `false`, если
+  /// слоёв уже 20.
+  bool addTextOverlay(TextOverlay overlay) {
+    final plan = state.plan;
+    if (plan == null || plan.textOverlays.length >= maxTextOverlays) {
+      return false;
+    }
+    _emit(
+      state.copyWith(
+        plan: plan.copyWith(textOverlays: [...plan.textOverlays, overlay]),
+      ),
+    );
+    return true;
+  }
+
+  /// Заменяет слой с тем же id (правки из листа редактирования).
+  void updateTextOverlay(TextOverlay overlay) {
+    final plan = state.plan;
+    if (plan == null) return;
+    final list = [
+      for (final o in plan.textOverlays)
+        if (o.id == overlay.id) overlay else o,
+    ];
+    _emit(state.copyWith(plan: plan.copyWith(textOverlays: list)));
+  }
+
+  void removeTextOverlay(String id) {
+    final plan = state.plan;
+    if (plan == null) return;
+    _emit(
+      state.copyWith(
+        plan: plan.copyWith(
+          textOverlays: plan.textOverlays.where((o) => o.id != id).toList(),
+        ),
+      ),
+    );
+  }
+
+  /// Перетаскивание: новый центр слоя в долях кадра (0..1 зажимается в
+  /// copyWith). Безопасную зону не форсируем — только предупреждаем в UI.
+  void repositionTextOverlay(String id, double x, double y) {
+    final plan = state.plan;
+    if (plan == null) return;
+    final list = [
+      for (final o in plan.textOverlays)
+        if (o.id == id) o.copyWith(x: x, y: y) else o,
+    ];
+    _emit(state.copyWith(plan: plan.copyWith(textOverlays: list)));
   }
 
   void setPlanCaptions(CaptionSettings captions) {

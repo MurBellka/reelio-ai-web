@@ -6,12 +6,15 @@ import '../../core/theme.dart';
 import '../../models/edit_plan.dart';
 import '../../models/enums.dart';
 import '../../models/media_asset.dart';
+import '../../models/text_overlay.dart';
+import '../../models/text_template.dart';
 import '../../models/transition.dart';
 import '../../shared/profile_button.dart';
 import '../../shared/app_background.dart';
 import '../../shared/media_thumbnail.dart';
 import '../../shared/premium_widgets.dart';
 import '../../state/providers.dart';
+import 'text_overlay_editor.dart';
 
 const _captionColors = <(String, int)>[
   ('Белый', 0xFFFFFFFF),
@@ -55,6 +58,48 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     );
     if (picked != null) {
       ref.read(projectProvider.notifier).setClipTransition(index, picked);
+    }
+  }
+
+  Future<void> _addText() async {
+    final notifier = ref.read(projectProvider.notifier);
+    if ((ref.read(projectProvider).plan?.textOverlays.length ?? 0) >=
+        ProjectController.maxTextOverlays) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Достигнут предел в 20 текстовых слоёв.')),
+      );
+      return;
+    }
+    final template = await showModalBottomSheet<TextTemplate>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => const TextTemplatePickerSheet(),
+    );
+    if (template == null || !mounted) return;
+
+    final overlay = template.build(
+      id: ref.read(uuidProvider).v4(),
+      text: 'Новый текст',
+    );
+    if (!notifier.addTextOverlay(overlay)) return;
+    // Сразу открываем редактор, чтобы пользователь ввёл свой текст.
+    await _editOverlay(overlay);
+  }
+
+  Future<void> _editOverlay(TextOverlay overlay) async {
+    final notifier = ref.read(projectProvider.notifier);
+    final result = await showModalBottomSheet<TextOverlayEditResult>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => TextOverlayEditSheet(overlay: overlay),
+    );
+    if (result == null) return;
+    if (result.deleted) {
+      notifier.removeTextOverlay(result.overlay.id);
+    } else {
+      notifier.updateTextOverlay(result.overlay);
     }
   }
 
@@ -126,6 +171,45 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                       onPickTransition: (i) =>
                           _pickTransition(i, plan.clips[i]),
                     ),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: SectionHeader(
+                            title: 'Текст',
+                            subtitle:
+                                'Перетащите слой пальцем, нажмите — чтобы '
+                                'изменить',
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: _addText,
+                          icon: const Icon(Icons.add_rounded),
+                          label: const Text('Добавить'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 360),
+                        child: TextStagePreview(
+                          plan: plan,
+                          onReposition: controller.repositionTextOverlay,
+                          onTapOverlay: _editOverlay,
+                        ),
+                      ),
+                    ),
+                    if (plan.textOverlays.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Слоёв: ${plan.textOverlays.length} из '
+                        '${ProjectController.maxTextOverlays}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 24),
                     const SectionHeader(title: 'Субтитры'),
                     const SizedBox(height: 8),
