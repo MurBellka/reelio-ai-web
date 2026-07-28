@@ -58,7 +58,7 @@ EditRequest _request() => const EditRequest(
   durationSeconds: 8,
   assets: [_asset],
   captions: CaptionSettings.defaults,
-  music: MusicSettings.defaults,
+  audio: AudioSettings.defaults,
 );
 
 /// Ответ backend'а с валидным планом.
@@ -67,7 +67,7 @@ String _planBody() => jsonEncode({
     'durationSeconds': 8,
     'style': 'dynamic',
     'captions': {'enabled': true, 'language': 'ru', 'style': 'bold'},
-    'music': {'mood': 'chill', 'volume': 0.7},
+    'audio': {'keepOriginal': true},
     'clips': [
       {'mediaId': 'asset_a', 'start': 0, 'end': 8, 'transition': 'cut'},
     ],

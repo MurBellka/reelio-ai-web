@@ -248,13 +248,13 @@ class _MontagePlayerState extends State<MontagePlayer>
                 ),
                 if (widget.badge != null)
                   Positioned(top: 12, left: 12, child: widget.badge!),
-                if (plan.music.track.hasAudio)
+                if (!plan.audio.keepOriginal)
                   Positioned(
                     top: 12,
                     right: 12,
                     child: _Chip(
-                      icon: Icons.music_note_rounded,
-                      label: plan.music.track.label,
+                      icon: Icons.volume_off_rounded,
+                      label: 'Без звука',
                     ),
                   ),
                 // Тап по центру — play/pause.

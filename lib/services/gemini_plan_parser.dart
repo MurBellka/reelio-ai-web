@@ -19,15 +19,6 @@ EditStyle _styleFrom(String? v) => switch (v) {
   _ => EditStyle.dynamicStyle,
 };
 
-MusicTrack _moodFrom(String? v) => switch (v) {
-  'energy' => MusicTrack.energy,
-  'chill' => MusicTrack.chill,
-  'cinematic' => MusicTrack.cinematic,
-  'trending' => MusicTrack.trending,
-  'none' || null || '' => MusicTrack.none,
-  _ => MusicTrack.chill,
-};
-
 CaptionStyle _captionStyleFrom(String? v) => switch (v) {
   'clean' => CaptionStyle.clean,
   'bold' => CaptionStyle.bold,
@@ -125,10 +116,12 @@ EditPlan parseGeminiPlan(
     sampleText: request.captions.sampleText,
   );
 
-  final musicJson = (json['music'] as Map?)?.cast<String, dynamic>();
-  final music = MusicSettings(
-    track: _moodFrom(musicJson?['mood'] as String?),
-    volume: (musicJson?['volume'] as num?)?.toDouble() ?? request.music.volume,
+  // Музыка убрана из контракта v2 (§0). Если сервер прислал звук, читаем
+  // единственный переключатель; иначе оставляем выбор пользователя.
+  final audioJson = (json['audio'] as Map?)?.cast<String, dynamic>();
+  final audio = AudioSettings(
+    keepOriginal:
+        audioJson?['keepOriginal'] as bool? ?? request.audio.keepOriginal,
   );
 
   final export = ExportResolver.build(
@@ -143,7 +136,7 @@ EditPlan parseGeminiPlan(
     style: _styleFrom(json['style'] as String?),
     durationSeconds: target,
     captions: captions,
-    music: music,
+    audio: audio,
     clips: clips,
     coverClipId: clips.first.id,
     export: export,

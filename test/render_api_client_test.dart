@@ -21,7 +21,7 @@ RenderRequest sampleRequest({String? idempotencyKey}) => RenderRequest(
     style: EditStyle.dynamicStyle,
     durationSeconds: 30,
     captions: CaptionSettings.defaults,
-    music: MusicSettings.defaults,
+    audio: AudioSettings.defaults,
     clips: const [
       EditClip(
         id: 'clip_1',

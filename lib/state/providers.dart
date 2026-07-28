@@ -132,11 +132,18 @@ class ProjectController extends Notifier<ProjectState> {
     state.copyWith(captions: state.captions.copyWith(sampleText: text)),
   );
 
-  void setMusicTrack(MusicTrack track) =>
-      _emit(state.copyWith(music: state.music.copyWith(track: track)));
-
-  void setMusicVolume(double volume) =>
-      _emit(state.copyWith(music: state.music.copyWith(volume: volume)));
+  /// Единственный звуковой переключатель (контракт v2 §1): сохранять ли
+  /// оригинальный звук исходников. Обновляет и настройки проекта, и план,
+  /// если он уже собран, — чтобы правка в редакторе доходила до рендера.
+  void setKeepOriginalSound(bool keepOriginal) {
+    final audio = AudioSettings(keepOriginal: keepOriginal);
+    _emit(
+      state.copyWith(
+        audio: audio,
+        plan: state.plan?.copyWith(audio: audio),
+      ),
+    );
+  }
 
   // --- Этапы и план --------------------------------------------------------
 
@@ -146,7 +153,7 @@ class ProjectController extends Notifier<ProjectState> {
     state.copyWith(
       plan: plan,
       captions: plan.captions,
-      music: plan.music,
+      audio: plan.audio,
       coverAssetId: plan.coverClipId,
     ),
   );
@@ -187,16 +194,6 @@ class ProjectController extends Notifier<ProjectState> {
       state.copyWith(
         captions: captions,
         plan: plan?.copyWith(captions: captions),
-      ),
-    );
-  }
-
-  void setPlanMusic(MusicSettings music) {
-    final plan = state.plan;
-    _emit(
-      state.copyWith(
-        music: music,
-        plan: plan?.copyWith(music: music),
       ),
     );
   }

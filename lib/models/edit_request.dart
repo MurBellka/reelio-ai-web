@@ -13,7 +13,7 @@ class EditRequest {
     required this.style,
     required this.durationSeconds,
     required this.captions,
-    required this.music,
+    required this.audio,
   });
 
   final List<MediaAsset> assets;
@@ -21,14 +21,14 @@ class EditRequest {
   final EditStyle style;
   final int durationSeconds;
   final CaptionSettings captions;
-  final MusicSettings music;
+  final AudioSettings audio;
 
   Map<String, dynamic> toJson() => {
     'prompt': prompt,
     'style': style.storageValue,
     'durationSeconds': durationSeconds,
     'captions': captions.toJson(),
-    'music': music.toJson(),
+    'audio': audio.toJson(),
     'assets': assets.map((a) => a.toJson()).toList(),
   };
 }

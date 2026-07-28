@@ -14,7 +14,7 @@ EditRequest requestWith({
   style: EditStyle.dynamicStyle,
   durationSeconds: duration,
   captions: CaptionSettings.defaults,
-  music: MusicSettings.defaults,
+  audio: AudioSettings.defaults,
 );
 
 List<MediaAsset> sampleAssets() => [

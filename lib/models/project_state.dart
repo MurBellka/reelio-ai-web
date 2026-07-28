@@ -12,7 +12,7 @@ class ProjectState {
     required this.style,
     required this.durationSeconds,
     required this.captions,
-    required this.music,
+    required this.audio,
     required this.stage,
     required this.updatedAt,
     this.plan,
@@ -25,7 +25,7 @@ class ProjectState {
   final EditStyle style;
   final int durationSeconds;
   final CaptionSettings captions;
-  final MusicSettings music;
+  final AudioSettings audio;
   final EditPlan? plan;
   final AppStage stage;
   final String? coverAssetId;
@@ -38,7 +38,7 @@ class ProjectState {
     style: EditStyle.dynamicStyle,
     durationSeconds: 30,
     captions: CaptionSettings.defaults,
-    music: MusicSettings.defaults,
+    audio: AudioSettings.defaults,
     stage: AppStage.onboarding,
     updatedAt: DateTime.now(),
   );
@@ -70,7 +70,7 @@ class ProjectState {
     style: style,
     durationSeconds: durationSeconds,
     captions: captions,
-    music: music,
+    audio: audio,
   );
 
   ProjectState copyWith({
@@ -79,7 +79,7 @@ class ProjectState {
     EditStyle? style,
     int? durationSeconds,
     CaptionSettings? captions,
-    MusicSettings? music,
+    AudioSettings? audio,
     Object? plan = _noValue,
     AppStage? stage,
     Object? coverAssetId = _noValue,
@@ -90,7 +90,7 @@ class ProjectState {
     style: style ?? this.style,
     durationSeconds: durationSeconds ?? this.durationSeconds,
     captions: captions ?? this.captions,
-    music: music ?? this.music,
+    audio: audio ?? this.audio,
     plan: plan == _noValue ? this.plan : plan as EditPlan?,
     stage: stage ?? this.stage,
     coverAssetId: coverAssetId == _noValue
@@ -105,7 +105,7 @@ class ProjectState {
     'style': style.storageValue,
     'durationSeconds': durationSeconds,
     'captions': captions.toJson(),
-    'music': music.toJson(),
+    'audio': audio.toJson(),
     'stage': stage.storageValue,
     'coverAssetId': coverAssetId,
     'updatedAt': updatedAt.toIso8601String(),
@@ -121,8 +121,8 @@ class ProjectState {
     captions: CaptionSettings.fromJson(
       (json['captions'] as Map).cast<String, dynamic>(),
     ),
-    music: MusicSettings.fromJson(
-      (json['music'] as Map).cast<String, dynamic>(),
+    audio: AudioSettings.fromJson(
+      (json['audio'] as Map?)?.cast<String, dynamic>(),
     ),
     stage: AppStage.fromStorage(json['stage'] as String? ?? 'onboarding'),
     coverAssetId: json['coverAssetId'] as String?,

@@ -77,7 +77,7 @@ EditPlan _plan() => EditPlan(
   style: EditStyle.dynamicStyle,
   durationSeconds: 8,
   captions: CaptionSettings.defaults,
-  music: MusicSettings.defaults,
+  audio: AudioSettings.defaults,
   clips: const [
     EditClip(
       id: 'c1',
@@ -116,7 +116,7 @@ final _responses = <String, Object>{
       'durationSeconds': 8,
       'style': 'dynamic',
       'captions': {'enabled': true, 'language': 'ru', 'style': 'bold'},
-      'music': {'mood': 'chill', 'volume': 0.7},
+      'audio': {'keepOriginal': true},
       'clips': [
         {'mediaId': 'asset_a', 'start': 0, 'end': 8, 'transition': 'cut'},
       ],

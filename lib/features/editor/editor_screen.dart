@@ -204,52 +204,44 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    const SectionHeader(title: 'Музыка'),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        for (final track in MusicTrack.values)
-                          ChoiceChip(
-                            avatar: Icon(track.icon, size: 18),
-                            label: Text(track.label),
-                            selected: plan.music.track == track,
-                            onSelected: (_) => controller.setPlanMusic(
-                              plan.music.copyWith(track: track),
+                    const SectionHeader(title: 'Звук'),
+                    const SizedBox(height: 8),
+                    SoftCard(
+                      child: Row(
+                        children: [
+                          Icon(
+                            plan.audio.keepOriginal
+                                ? Icons.volume_up_rounded
+                                : Icons.volume_off_rounded,
+                            color: theme.colorScheme.primary,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Оригинальный звук',
+                                  style: theme.textTheme.titleMedium,
+                                ),
+                                Text(
+                                  plan.audio.keepOriginal
+                                      ? 'Звук исходников сохранится'
+                                      : 'Ролик будет без звука',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                      ],
-                    ),
-                    if (plan.music.track.hasAudio) ...[
-                      const SizedBox(height: 12),
-                      SoftCard(
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.volume_up_rounded,
-                              color: theme.colorScheme.primary,
-                            ),
-                            Expanded(
-                              child: Slider(
-                                value: plan.music.volume,
-                                onChanged: (v) => controller.setPlanMusic(
-                                  plan.music.copyWith(volume: v),
-                                ),
-                              ),
-                            ),
-                            SizedBox(
-                              width: 44,
-                              child: Text(
-                                '${(plan.music.volume * 100).round()}%',
-                                textAlign: TextAlign.end,
-                                style: theme.textTheme.labelLarge,
-                              ),
-                            ),
-                          ],
-                        ),
+                          Switch(
+                            value: plan.audio.keepOriginal,
+                            onChanged: controller.setKeepOriginalSound,
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ],
                 ),
               ),

@@ -35,7 +35,7 @@ EditPlan _plan(List<MediaAsset> assets) => EditPlan(
   style: EditStyle.dynamicStyle,
   durationSeconds: 8,
   captions: CaptionSettings.defaults,
-  music: MusicSettings.defaults,
+  audio: AudioSettings.defaults,
   clips: [
     for (final a in assets)
       EditClip(

@@ -12,12 +12,12 @@ import '../../state/providers.dart';
 
 const _promptExample =
     'Сделай динамичный ролик о поездке, начни с вида на море, используй '
-    'быстрые склейки и добавь спокойную музыку';
+    'быстрые склейки и добавь субтитры';
 
 const _promptSuggestions = <String>[
   'Динамичный ролик о путешествии с быстрыми склейками',
-  'Спокойный влог одного дня с мягкой музыкой',
-  'Яркая нарезка лучших моментов под трендовую музыку',
+  'Спокойный влог одного дня в тёплых тонах',
+  'Яркая нарезка лучших моментов',
   'Кинематографичная история заката у моря',
 ];
 
@@ -225,47 +225,12 @@ class _EditSettingsScreenState extends ConsumerState<EditSettingsScreen> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    const SectionHeader(title: 'Музыка'),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        for (final track in MusicTrack.values)
-                          _MusicChip(
-                            track: track,
-                            selected: project.music.track == track,
-                            onTap: () => controller.setMusicTrack(track),
-                          ),
-                      ],
+                    const SectionHeader(title: 'Звук'),
+                    const SizedBox(height: 8),
+                    _OriginalSoundCard(
+                      keepOriginal: project.audio.keepOriginal,
+                      onChanged: controller.setKeepOriginalSound,
                     ),
-                    if (project.music.track.hasAudio) ...[
-                      const SizedBox(height: 16),
-                      SoftCard(
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.volume_up_rounded,
-                              color: theme.colorScheme.primary,
-                            ),
-                            Expanded(
-                              child: Slider(
-                                value: project.music.volume,
-                                onChanged: controller.setMusicVolume,
-                              ),
-                            ),
-                            SizedBox(
-                              width: 44,
-                              child: Text(
-                                '${(project.music.volume * 100).round()}%',
-                                textAlign: TextAlign.end,
-                                style: theme.textTheme.labelLarge,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
                     const SizedBox(height: 24),
                     _SummaryCard(),
                   ],
@@ -303,32 +268,53 @@ class _DurationSelector extends StatelessWidget {
   }
 }
 
-class _MusicChip extends StatelessWidget {
-  const _MusicChip({
-    required this.track,
-    required this.selected,
-    required this.onTap,
+/// Единственный звуковой переключатель: сохранять оригинальный звук или
+/// экспортировать ролик без аудио. Фоновая музыка из продукта убрана —
+/// трендовый трек добавляется уже в Instagram.
+class _OriginalSoundCard extends StatelessWidget {
+  const _OriginalSoundCard({
+    required this.keepOriginal,
+    required this.onChanged,
   });
-  final MusicTrack track;
-  final bool selected;
-  final VoidCallback onTap;
+  final bool keepOriginal;
+  final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return SelectableTile(
-      selected: selected,
-      onTap: onTap,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+    final theme = Theme.of(context);
+    return SoftCard(
+      child: Column(
         children: [
-          Icon(
-            track.icon,
-            size: 20,
-            color: selected ? scheme.primary : scheme.onSurfaceVariant,
+          Row(
+            children: [
+              Icon(
+                keepOriginal
+                    ? Icons.volume_up_rounded
+                    : Icons.volume_off_rounded,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Оригинальный звук',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              Switch(value: keepOriginal, onChanged: onChanged),
+            ],
           ),
-          const SizedBox(width: 8),
-          Text(track.label, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              keepOriginal
+                  ? 'Звук исходников сохранится в ролике'
+                  : 'Ролик будет без звука — трек добавите в Instagram',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -340,9 +326,7 @@ class _SummaryCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final p = ref.watch(projectProvider);
     final theme = Theme.of(context);
-    final music = p.music.track.hasAudio
-        ? '${p.music.track.label} · ${(p.music.volume * 100).round()}%'
-        : 'Без музыки';
+    final sound = p.audio.keepOriginal ? 'Оригинальный' : 'Без звука';
     return SoftCard(
       color: theme.colorScheme.secondaryContainer,
       child: Column(
@@ -360,7 +344,7 @@ class _SummaryCard extends ConsumerWidget {
             label: 'Субтитры',
             value: p.captions.enabled ? 'Вкл · ${p.captions.language}' : 'Выкл',
           ),
-          _SummaryRow(label: 'Музыка', value: music),
+          _SummaryRow(label: 'Звук', value: sound),
         ],
       ),
     );

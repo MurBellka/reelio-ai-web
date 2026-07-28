@@ -37,7 +37,7 @@ EditPlan _plan() => EditPlan(
   style: EditStyle.dynamicStyle,
   durationSeconds: 10,
   captions: CaptionSettings.defaults,
-  music: MusicSettings.defaults,
+  audio: AudioSettings.defaults,
   coverClipId: 'clip_1',
   clips: const [
     EditClip(

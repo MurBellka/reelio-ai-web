@@ -63,32 +63,30 @@ class CaptionSettings {
       );
 }
 
-/// Настройки музыки в монтажном плане.
-class MusicSettings {
-  const MusicSettings({required this.track, required this.volume});
+/// Настройки звука в монтажном плане (контракт v2 §1).
+///
+/// Фоновая музыка убрана из продукта целиком: трендовый трек пользователь
+/// добавляет уже в Instagram поверх готового ролика. Поэтому единственный
+/// переключатель — сохранять ли оригинальный звук исходников.
+class AudioSettings {
+  const AudioSettings({this.keepOriginal = true});
 
-  final MusicTrack track;
+  /// `true` — оригинальные дорожки склеиваются и нормализуются; `false` —
+  /// MP4 экспортируется вообще без аудиопотока.
+  final bool keepOriginal;
 
-  /// Громкость музыки 0..1.
-  final double volume;
+  static const AudioSettings defaults = AudioSettings(keepOriginal: true);
 
-  static const MusicSettings defaults = MusicSettings(
-    track: MusicTrack.chill,
-    volume: 0.7,
-  );
+  AudioSettings copyWith({bool? keepOriginal}) =>
+      AudioSettings(keepOriginal: keepOriginal ?? this.keepOriginal);
 
-  MusicSettings copyWith({MusicTrack? track, double? volume}) =>
-      MusicSettings(track: track ?? this.track, volume: volume ?? this.volume);
+  Map<String, dynamic> toJson() => {'keepOriginal': keepOriginal};
 
-  Map<String, dynamic> toJson() => {
-    'track': track.storageValue,
-    'volume': volume,
-  };
-
-  factory MusicSettings.fromJson(Map<String, dynamic> json) => MusicSettings(
-    track: MusicTrack.fromStorage(json['track'] as String? ?? 'chill'),
-    volume: (json['volume'] as num?)?.toDouble() ?? 0.7,
-  );
+  /// Разбирает `audio` из v2. Терпимо к отсутствию секции (старые черновики,
+  /// где было только устаревшее `music`): по умолчанию оригинальный звук
+  /// сохраняется.
+  factory AudioSettings.fromJson(Map<String, dynamic>? json) =>
+      AudioSettings(keepOriginal: json?['keepOriginal'] as bool? ?? true);
 }
 
 /// Один фрагмент монтажного плана.
@@ -195,7 +193,7 @@ class EditPlan {
     required this.style,
     required this.durationSeconds,
     required this.captions,
-    required this.music,
+    required this.audio,
     required this.clips,
     this.coverClipId,
     this.export = ExportSettings.defaults,
@@ -206,7 +204,7 @@ class EditPlan {
   final EditStyle style;
   final int durationSeconds;
   final CaptionSettings captions;
-  final MusicSettings music;
+  final AudioSettings audio;
   final List<EditClip> clips;
 
   /// Идентификатор клипа, выбранного как обложка.
@@ -222,7 +220,7 @@ class EditPlan {
   EditPlan copyWith({
     List<EditClip>? clips,
     CaptionSettings? captions,
-    MusicSettings? music,
+    AudioSettings? audio,
     String? coverClipId,
     ExportSettings? export,
   }) => EditPlan(
@@ -231,7 +229,7 @@ class EditPlan {
     style: style,
     durationSeconds: durationSeconds,
     captions: captions ?? this.captions,
-    music: music ?? this.music,
+    audio: audio ?? this.audio,
     clips: clips ?? this.clips,
     coverClipId: coverClipId ?? this.coverClipId,
     export: export ?? this.export,
@@ -243,7 +241,7 @@ class EditPlan {
     'style': style.storageValue,
     'durationSeconds': durationSeconds,
     'captions': captions.toJson(),
-    'music': music.toJson(),
+    'audio': audio.toJson(),
     'coverClipId': coverClipId,
     'export': export.toJson(),
     'clips': clips.map((c) => c.toJson()).toList(),
@@ -257,8 +255,8 @@ class EditPlan {
     captions: CaptionSettings.fromJson(
       (json['captions'] as Map).cast<String, dynamic>(),
     ),
-    music: MusicSettings.fromJson(
-      (json['music'] as Map).cast<String, dynamic>(),
+    audio: AudioSettings.fromJson(
+      (json['audio'] as Map?)?.cast<String, dynamic>(),
     ),
     coverClipId: json['coverClipId'] as String?,
     export: json['export'] == null

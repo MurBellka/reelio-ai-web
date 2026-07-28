@@ -82,7 +82,7 @@ void main() {
             ),
           ],
           captions: CaptionSettings.defaults,
-          music: MusicSettings.defaults,
+          audio: AudioSettings.defaults,
         ),
       );
 
@@ -120,7 +120,7 @@ void main() {
           style: EditStyle.dynamicStyle,
           durationSeconds: 8,
           captions: CaptionSettings.defaults,
-          music: MusicSettings.defaults,
+          audio: AudioSettings.defaults,
           clips: const [
             EditClip(
               id: 'c1',

@@ -40,7 +40,7 @@ EditPlan _plan({ExportSettings? export}) => EditPlan(
   style: EditStyle.dynamicStyle,
   durationSeconds: 10,
   captions: CaptionSettings.defaults,
-  music: MusicSettings.defaults,
+  audio: AudioSettings.defaults,
   coverClipId: 'clip_1',
   export: export ?? ExportSettings.defaults,
   clips: const [

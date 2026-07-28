@@ -210,7 +210,7 @@ class InfoPill extends StatelessWidget {
   }
 }
 
-/// Выбираемая карточка-опция (стиль, музыка и т. п.).
+/// Выбираемая карточка-опция (стиль, переход и т. п.).
 class SelectableTile extends StatelessWidget {
   const SelectableTile({
     super.key,

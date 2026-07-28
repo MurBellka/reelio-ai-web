@@ -77,7 +77,7 @@ class MockAiEditingService implements AiEditingService {
       style: request.style,
       durationSeconds: target,
       captions: request.captions,
-      music: request.music,
+      audio: request.audio,
       clips: clips,
       coverClipId: clips.isNotEmpty ? clips.first.id : null,
       export: export,

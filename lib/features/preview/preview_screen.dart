@@ -94,9 +94,13 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                       children: [
                         Expanded(
                           child: _InfoTile(
-                            icon: plan.music.track.icon,
-                            label: 'Музыка',
-                            value: plan.music.track.label,
+                            icon: plan.audio.keepOriginal
+                                ? Icons.volume_up_rounded
+                                : Icons.volume_off_rounded,
+                            label: 'Звук',
+                            value: plan.audio.keepOriginal
+                                ? 'Оригинал'
+                                : 'Без звука',
                           ),
                         ),
                         const SizedBox(width: 12),

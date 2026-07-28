@@ -31,7 +31,7 @@ EditPlan planWith(List<EditClip> clips, {ExportSettings? export}) => EditPlan(
   style: EditStyle.dynamicStyle,
   durationSeconds: 30,
   captions: CaptionSettings.defaults,
-  music: MusicSettings.defaults,
+  audio: AudioSettings.defaults,
   clips: clips,
   coverClipId: clips.isEmpty ? null : clips.first.id,
   export: export ?? ExportSettings.defaults,
