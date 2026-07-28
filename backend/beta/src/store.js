@@ -74,6 +74,9 @@ export const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
  * тоже сериализует конфликтующие транзакции, просто делает это распределённо.
  */
 export class MemoryStore {
+  /** Тип хранилища — облачный guard запрещает 'memory' в cloud mode (§4A.5). */
+  kind = 'memory';
+
   constructor() {
     this.analyses = new Map(); // fingerprint → MediaAnalysis (кэш §5)
     this.jobs = new Map(); // jobId → job
@@ -141,6 +144,38 @@ export class MemoryStore {
 }
 
 /**
+ * Облачный guard (§4A.5): в cloud mode MemoryStore запрещён. Иначе несколько
+ * инстансов Cloud Run держали бы РАЗНЫЕ счётчики квот, кэш и отпечатки
+ * идемпотентности — лимиты обходились бы простым распараллеливанием, а
+ * незавершённые задачи терялись бы при перезапуске инстанса.
+ */
+export function assertStoreForMode(config, store) {
+  if (config.mode === 'cloud' && store?.kind !== 'firestore') {
+    throw new Error(
+      'REFUSING TO START: cloud mode требует Firestore-хранилища, ' +
+        `получено «${store?.kind ?? 'unknown'}». MemoryStore допустим только ` +
+        'локально и в тестах (§4A.5).',
+    );
+  }
+}
+
+/**
+ * Фабрика хранилища. Локально/в тестах — MemoryStore; в облаке —
+ * FirestoreStore (грузится динамически, чтобы юнит-тесты не тянули SDK).
+ */
+export async function createStore(config) {
+  if (config.storeKind === 'firestore') {
+    const { FirestoreStore } = await import('./store-firestore.js');
+    const store = await FirestoreStore.create(config);
+    assertStoreForMode(config, store);
+    return store;
+  }
+  const store = new MemoryStore();
+  assertStoreForMode(config, store);
+  return store;
+}
+
+/**
  * Операции квот поверх хранилища (§3).
  *
  * Списание всегда происходит ВНУТРИ транзакции вызывающего кода: отдельный
@@ -151,15 +186,18 @@ export function buildQuotaOps({ limits, store }) {
   const userDoc = (uid, day) => `u_${uid}_${day}`;
   const projectDoc = (uid, projectId, day) => `p_${uid}_${projectId}_${day}`;
 
+  // Методы await-совместимы: MemoryStore возвращает значения синхронно,
+  // Firestore — через промис. `await` числа — no-op, поэтому один и тот же код
+  // работает с обеими реализациями.
   return {
     /** Текущее потребление — для показа пользователю. */
-    usage(uid, projectId, now = new Date()) {
+    async usage(uid, projectId, now = new Date()) {
       const day = dayKey(now);
       return {
         day,
-        user: store.readCounter(userDoc(uid, day)),
+        user: await store.readCounter(userDoc(uid, day)),
         userLimit: limits.perUserPerDay,
-        project: projectId ? store.readCounter(projectDoc(uid, projectId, day)) : 0,
+        project: projectId ? await store.readCounter(projectDoc(uid, projectId, day)) : 0,
         projectLimit: limits.perProjectPerDay,
       };
     },
@@ -168,38 +206,38 @@ export function buildQuotaOps({ limits, store }) {
      * Проверяет и списывает одну единицу анализа. Вызывается внутри транзакции.
      * @throws {{code: string}} при исчерпании лимита
      */
-    charge(tx, { uid, projectId, now = new Date() }) {
+    async charge(tx, { uid, projectId, now = new Date() }) {
       const day = dayKey(now);
       const uDoc = userDoc(uid, day);
       const pDoc = projectDoc(uid, projectId, day);
 
-      const userCount = tx.readCounter(uDoc);
+      const userCount = await tx.readCounter(uDoc);
       if (userCount >= limits.perUserPerDay) {
         const err = new Error('Суточный лимит анализов исчерпан.');
         err.code = 'DAILY_LIMIT_REACHED';
         throw err;
       }
 
-      const projectCount = tx.readCounter(pDoc);
+      const projectCount = await tx.readCounter(pDoc);
       if (projectCount >= limits.perProjectPerDay) {
         const err = new Error('Лимит анализов для этого проекта исчерпан.');
         err.code = 'PROJECT_LIMIT_REACHED';
         throw err;
       }
 
-      tx.writeCounter(uDoc, userCount + 1);
-      tx.writeCounter(pDoc, projectCount + 1);
+      await tx.writeCounter(uDoc, userCount + 1);
+      await tx.writeCounter(pDoc, projectCount + 1);
       return { user: userCount + 1, project: projectCount + 1 };
     },
 
     /** Возврат квоты: за отменённую работу платить не должны. */
-    refund(tx, { uid, projectId, now = new Date() }) {
+    async refund(tx, { uid, projectId, now = new Date() }) {
       const day = dayKey(now);
       const uDoc = userDoc(uid, day);
       const pDoc = projectDoc(uid, projectId, day);
 
-      tx.writeCounter(uDoc, Math.max(0, tx.readCounter(uDoc) - 1));
-      tx.writeCounter(pDoc, Math.max(0, tx.readCounter(pDoc) - 1));
+      await tx.writeCounter(uDoc, Math.max(0, (await tx.readCounter(uDoc)) - 1));
+      await tx.writeCounter(pDoc, Math.max(0, (await tx.readCounter(pDoc)) - 1));
     },
   };
 }

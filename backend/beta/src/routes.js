@@ -99,7 +99,7 @@ export function createAnalysisRoutes({ service, quota, limits }) {
 
     /** GET /analysis/:id */
     status: wrap(async (req, res) => {
-      const job = service.getAnalysis(req.uid, requireId(req.params.id, 'id'));
+      const job = await service.getAnalysis(req.uid, requireId(req.params.id, 'id'));
       res.set('Cache-Control', 'no-store');
       res.json({ analysis: toPublicJob(job) });
     }),
@@ -113,7 +113,7 @@ export function createAnalysisRoutes({ service, quota, limits }) {
     /** POST /analysis/:id/retry */
     retry: wrap(async (req, res) => {
       const id = requireId(req.params.id, 'id');
-      const existing = service.getAnalysis(req.uid, id);
+      const existing = await service.getAnalysis(req.uid, id);
       const assets = parseAssets(req.body?.assets, req.uid, existing.projectId);
 
       const { job, isNew } = await service.retryAnalysis(req.uid, id, assets);
@@ -128,7 +128,7 @@ export function createAnalysisRoutes({ service, quota, limits }) {
      * угодно менять команды и смотреть предпросмотр до платного рендера.
      */
     plan: wrap(async (req, res) => {
-      const job = service.getAnalysis(req.uid, requireId(req.params.id, 'id'));
+      const job = await service.getAnalysis(req.uid, requireId(req.params.id, 'id'));
       if (job.status !== 'succeeded') {
         throw new ApiError('ANALYSIS_NOT_FOUND', 'Анализ ещё не готов.', {
           detail: `status=${job.status}`,
@@ -180,7 +180,7 @@ export function createAnalysisRoutes({ service, quota, limits }) {
     /** GET /usage — сколько анализов осталось сегодня. */
     usage: wrap(async (req, res) => {
       const projectId = req.query?.projectId;
-      const usage = quota.usage(req.uid, projectId && ID_RE.test(projectId) ? projectId : null);
+      const usage = await quota.usage(req.uid, projectId && ID_RE.test(projectId) ? projectId : null);
 
       res.set('Cache-Control', 'no-store');
       res.json({

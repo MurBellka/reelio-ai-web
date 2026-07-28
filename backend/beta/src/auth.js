@@ -134,6 +134,49 @@ export function appCheckGuard({ verifier, mode = 'off' }) {
 }
 
 /**
+ * OIDC-верификатор для внутреннего endpoint'а (§4A.7). Cloud Tasks подписывает
+ * задачу ID-токеном Google от имени invoker-SA; проверяем подпись и что вызов
+ * пришёл именно от нашего SA. SDK грузится динамически.
+ */
+export async function createOidcVerifier(config) {
+  if (config.tasks?.oidcVerifier) return config.tasks.oidcVerifier; // подмена в тестах
+  if (config.mode !== 'cloud') return null;
+  const { OAuth2Client } = await import('google-auth-library');
+  const client = new OAuth2Client();
+  const allowedEmail = config.tasks.invokerServiceAccount;
+
+  return {
+    async verify(token, audience) {
+      const ticket = await client.verifyIdToken({ idToken: token, audience });
+      const payload = ticket.getPayload();
+      if (allowedEmail && payload?.email !== allowedEmail) {
+        throw new Error('unexpected caller');
+      }
+      return { email: payload?.email };
+    },
+  };
+}
+
+/**
+ * Middleware внутреннего endpoint'а. Без верификатора маршрут ЗАКРЫТ: иначе в
+ * облаке его можно было бы дёрнуть без токена и запустить чужую задачу.
+ */
+export function internalGuard({ verifier, audience }) {
+  return async (req, _res, next) => {
+    try {
+      if (!verifier) throw new ApiError('FORBIDDEN', 'Внутренний маршрут недоступен.');
+      const token = bearerToken(req);
+      if (!token) throw new ApiError('UNAUTHENTICATED', 'Требуется OIDC-токен.');
+      await verifier.verify(token, audience);
+      return next();
+    } catch (err) {
+      if (err instanceof ApiError) return next(err);
+      return next(new ApiError('FORBIDDEN', 'OIDC-проверка не пройдена.', { detail: err?.message }));
+    }
+  };
+}
+
+/**
  * Проверка владения объектом (§3 долга — изоляция по uid).
  *
  * Схему путей задаёт сервер, и в неё зашит проверенный uid. Клиент не может

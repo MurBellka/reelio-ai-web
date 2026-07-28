@@ -77,8 +77,20 @@ export class AnalysisService {
     this.media = deps.media;
     this.logger = deps.logger ?? null;
     this.now = deps.now ?? (() => new Date());
-    /** jobId → AbortController, для кооперативной отмены. */
+    /** jobId → AbortController, для кооперативной отмены в этом инстансе. */
     this.running = new Map();
+
+    // Долговечное выполнение (§4A.7): вместо fire-and-forget задача ставится в
+    // очередь. В облаке это Cloud Tasks (переживает перезапуск инстанса); по
+    // умолчанию — минимальная встроенная очередь, запускающая обработчик
+    // асинхронно (для тестов и local mode). enqueue сам НЕ ждёт результата.
+    this.taskQueue = deps.taskQueue ?? {
+      enqueue: (payload) => {
+        const p = Promise.resolve().then(() => this.runJob(payload.jobId, payload));
+        this._pending = (this._pending ?? Promise.resolve()).then(() => p.catch(() => {}));
+        return Promise.resolve({ scheduled: true });
+      },
+    };
   }
 
   /**
@@ -119,7 +131,7 @@ export class AnalysisService {
     const fingerprint = requestFingerprint({ uid, projectId, idempotencyKey, contentHash });
 
     const created = await this.store.runTransaction(async (tx) => {
-      const existing = tx.findJobByFingerprint(fingerprint);
+      const existing = await tx.findJobByFingerprint(fingerprint);
       if (existing) {
         // §4: тот же запрос — та же задача. Ни Gemini, ни квота не трогаются.
         if (existing.uid !== uid) {
@@ -128,12 +140,12 @@ export class AnalysisService {
         return { job: existing, isNew: false };
       }
 
-      if (tx.countActiveJobs(uid) >= this.limits.maxActiveAnalyses) {
+      if ((await tx.countActiveJobs(uid)) >= this.limits.maxActiveAnalyses) {
         throw new ApiError('TOO_MANY_ACTIVE_ANALYSES', 'Уже выполняется другой анализ.');
       }
 
       const now = this.now().toISOString();
-      const job = tx.putJob({
+      const job = await tx.putJob({
         id: newId('an'),
         uid,
         projectId,
@@ -158,16 +170,23 @@ export class AnalysisService {
     });
 
     if (created.isNew) {
-      // Запуск в фоне: HTTP-ответ не ждёт анализа.
-      this.#run(created.job.id, { uid, projectId, assets }).catch(() => {});
+      // §4A.7: не fire-and-forget, а долговечная очередь. HTTP-ответ уходит
+      // сразу; обработчик запускается очередью и переживает перезапуск инстанса.
+      await this.taskQueue.enqueue({
+        kind: 'analysis.run',
+        jobId: created.job.id,
+        uid,
+        projectId,
+        assets,
+      });
     }
 
     return { job: created.job, isNew: created.isNew };
   }
 
   /** Статус задачи с проверкой владения (§3). */
-  getAnalysis(uid, analysisId) {
-    const job = this.store.getJob(analysisId);
+  async getAnalysis(uid, analysisId) {
+    const job = await this.store.getJob(analysisId);
     // Одинаковая ошибка для чужого и несуществующего: иначе по коду ответа
     // можно перебором узнавать, какие идентификаторы существуют.
     if (!job || job.uid !== uid) {
@@ -178,20 +197,23 @@ export class AnalysisService {
 
   /** Кооперативная отмена (§12). Возвращает квоту, если она была списана. */
   async cancelAnalysis(uid, analysisId) {
-    const job = this.getAnalysis(uid, analysisId);
+    const job = await this.getAnalysis(uid, analysisId);
     if (TERMINAL_STATUSES.has(job.status)) {
       throw new ApiError('ANALYSIS_ALREADY_TERMINAL', 'Анализ уже завершён.');
     }
 
+    // Отмена в этом инстансе — сразу; отмена на другом инстансе (Cloud Tasks
+    // мог запустить обработчик где угодно) обеспечивается тем, что цикл
+    // runJob перечитывает статус задачи из хранилища на каждом материале.
     this.running.get(analysisId)?.abort();
 
     return this.store.runTransaction(async (tx) => {
-      const current = tx.getJob(analysisId);
+      const current = await tx.getJob(analysisId);
       if (TERMINAL_STATUSES.has(current.status)) return current;
 
       if (current.creditsSpent > 0) {
         for (let i = 0; i < current.creditsSpent; i += 1) {
-          this.quota.refund(tx, { uid, projectId: current.projectId, now: this.now() });
+          await this.quota.refund(tx, { uid, projectId: current.projectId, now: this.now() });
         }
       }
 
@@ -216,7 +238,7 @@ export class AnalysisService {
    * кэша: платим только за то, что действительно осталось сделать.
    */
   async retryAnalysis(uid, analysisId, assets) {
-    const job = this.getAnalysis(uid, analysisId);
+    const job = await this.getAnalysis(uid, analysisId);
     if (job.status === 'succeeded') return { job, isNew: false };
     if (job.status === 'running' || job.status === 'queued') {
       throw new ApiError('ANALYSIS_ALREADY_TERMINAL', 'Анализ ещё выполняется.');
@@ -225,7 +247,7 @@ export class AnalysisService {
     const now = this.now().toISOString();
     const revived = await this.store.runTransaction(async (tx) =>
       tx.putJob({
-        ...tx.getJob(analysisId),
+        ...(await tx.getJob(analysisId)),
         status: 'queued',
         phase: 'queued',
         progress: 0,
@@ -237,14 +259,20 @@ export class AnalysisService {
       }),
     );
 
-    this.#run(analysisId, { uid, projectId: job.projectId, assets }).catch(() => {});
+    await this.taskQueue.enqueue({
+      kind: 'analysis.run',
+      jobId: analysisId,
+      uid,
+      projectId: job.projectId,
+      assets,
+    });
     return { job: revived, isNew: true };
   }
 
   /** Обновление прогресса — безопасное: наружу не уходит ничего лишнего (§6). */
   async #progress(jobId, phase, fraction, message) {
     return this.store.runTransaction(async (tx) => {
-      const job = tx.getJob(jobId);
+      const job = await tx.getJob(jobId);
       if (!job || TERMINAL_STATUSES.has(job.status)) return job;
 
       const spec = ANALYSIS_PHASES[phase] ?? ANALYSIS_PHASES.queued;
@@ -262,13 +290,28 @@ export class AnalysisService {
     });
   }
 
-  #isCancelled(jobId) {
-    const job = this.store.getJob(jobId);
+  async #isCancelled(jobId) {
+    const job = await this.store.getJob(jobId);
     return !job || TERMINAL_STATUSES.has(job.status);
   }
 
-  /** Основной проход анализа. */
-  async #run(jobId, { uid, projectId, assets }) {
+  /**
+   * Основной проход анализа — публичный: его вызывает очередь (§4A.7), а в
+   * облаке — внутренний OIDC-endpoint по задаче Cloud Tasks.
+   *
+   * Идемпотентность повтора (§4A.7): уже завершённая задача — no-op; уже
+   * разобранный материал берётся из кэша по хешу содержимого, поэтому Gemini
+   * повторно не вызывается и квота не списывается.
+   *
+   * Исчерпание повторов: при retryable-сбое и не последней попытке ошибка
+   * пробрасывается (очередь повторит); на последней попытке фиксируется
+   * безопасное терминальное состояние `failed`.
+   */
+  async runJob(jobId, { uid, projectId, assets, attempt = 0, maxAttempts = 1 }) {
+    const existing = await this.store.getJob(jobId);
+    if (!existing || TERMINAL_STATUSES.has(existing.status)) return; // идемпотентно
+    if (existing.uid !== uid) return; // чужую задачу не трогаем
+
     const controller = new AbortController();
     this.running.set(jobId, controller);
 
@@ -282,7 +325,7 @@ export class AnalysisService {
       await this.#progress(jobId, 'probing', 0, 'Проверка материалов');
 
       for (const [index, asset] of assets.entries()) {
-        if (this.#isCancelled(jobId) || controller.signal.aborted) {
+        if ((await this.#isCancelled(jobId)) || controller.signal.aborted) {
           throw new ApiError('CANCELLED', 'Анализ отменён.');
         }
 
@@ -300,7 +343,7 @@ export class AnalysisService {
           model: this.gemini?.model ?? 'none',
         });
 
-        const cached = this.store.getAnalysis(fingerprint);
+        const cached = await this.store.getAnalysis(fingerprint);
         if (cached) {
           // Кэш-попадание: ни вызова модели, ни списания квоты.
           analyses.push(cached);
@@ -319,9 +362,9 @@ export class AnalysisService {
 
         // Квота списывается ровно перед платной работой и в одной транзакции.
         await this.store.runTransaction(async (tx) => {
-          this.quota.charge(tx, { uid, projectId, now: this.now() });
-          const job = tx.getJob(jobId);
-          tx.putJob({ ...job, creditsSpent: (job.creditsSpent ?? 0) + 1 });
+          await this.quota.charge(tx, { uid, projectId, now: this.now() });
+          const job = await tx.getJob(jobId);
+          await tx.putJob({ ...job, creditsSpent: (job.creditsSpent ?? 0) + 1 });
         });
         credits += 1;
 
@@ -334,7 +377,7 @@ export class AnalysisService {
           signal: controller.signal,
         });
 
-        this.store.putAnalysis(fingerprint, analysis);
+        await this.store.putAnalysis(fingerprint, analysis);
         analyses.push(analysis);
 
         await this.#progress(
@@ -351,7 +394,7 @@ export class AnalysisService {
 
       const now = this.now().toISOString();
       await this.store.runTransaction(async (tx) => {
-        const job = tx.getJob(jobId);
+        const job = await tx.getJob(jobId);
         if (TERMINAL_STATUSES.has(job.status)) return job;
 
         return tx.putJob({
@@ -380,10 +423,24 @@ export class AnalysisService {
       });
     } catch (err) {
       const api = toApiError(err);
-      const cancelled = api.code === 'CANCELLED' || this.#isCancelled(jobId);
+      const cancelled = api.code === 'CANCELLED' || (await this.#isCancelled(jobId));
+
+      // §4A.7: retryable-сбой на НЕ последней попытке — пробрасываем, чтобы
+      // очередь повторила задачу (job остаётся в running, прогресс сохранён).
+      // Отмена и не-retryable ошибки повторять бессмысленно.
+      const lastAttempt = attempt >= maxAttempts - 1;
+      if (!cancelled && api.retryable && !lastAttempt) {
+        this.running.delete(jobId);
+        this.logger?.warn?.('analysis attempt failed, will retry', {
+          jobId,
+          attempt,
+          code: api.code,
+        });
+        throw err;
+      }
 
       await this.store.runTransaction(async (tx) => {
-        const job = tx.getJob(jobId);
+        const job = await tx.getJob(jobId);
         if (!job || TERMINAL_STATUSES.has(job.status)) return job;
 
         const now = this.now().toISOString();
