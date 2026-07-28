@@ -126,6 +126,9 @@ export async function startServer(overrides = {}) {
     logger: overrides.logger,
     taskQueue: overrides.taskQueue,
     oidcVerifier: overrides.oidcVerifier,
+    render: overrides.render,
+    renderService: overrides.renderService,
+    now: overrides.now,
   });
 
   const server = http.createServer(built.app);

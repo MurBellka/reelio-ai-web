@@ -9,10 +9,19 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 
 import { AnalysisService } from './analysis-service.js';
-import { appCheckGuard, createOidcVerifier, createVerifier, internalGuard, requireAuth } from './auth.js';
+import {
+  appCheckGuard,
+  createOidcVerifier,
+  createVerifier,
+  internalGuard,
+  requireAuth,
+  workerTokenGuard,
+} from './auth.js';
 import { healthSnapshot, loadConfig } from './config.js';
 import { ApiError, errorHandler } from './errors.js';
 import { createGeminiClient } from './gemini.js';
+import { RenderService, createRenderAdapters } from './render.js';
+import { createRenderRoutes, renderProgressHandler } from './render-routes.js';
 import { createAnalysisRoutes } from './routes.js';
 import { assertStoreForMode, buildQuotaOps, createStore } from './store.js';
 import { createTaskQueue } from './tasks.js';
@@ -56,7 +65,22 @@ export async function createApp(overrides = {}) {
 
   const oidcVerifier = overrides.oidcVerifier ?? (await createOidcVerifier(config));
 
+  // Render API v2 (§4B). Адаптеры подписи URL и запуска Job — фейки в тестах,
+  // боевые (GCS + Cloud Run Jobs) в облаке.
+  const renderAdapters = overrides.render ?? (await createRenderAdapters(config));
+  const renderService =
+    overrides.renderService ??
+    new RenderService({
+      store,
+      config,
+      signer: renderAdapters.signer,
+      jobs: renderAdapters.jobs,
+      logger: overrides.logger,
+      now: overrides.now,
+    });
+
   const routes = createAnalysisRoutes({ service, quota, limits: config.limits });
+  const render = createRenderRoutes({ renderService });
 
   const app = express();
   app.disable('x-powered-by');
@@ -141,8 +165,23 @@ export async function createApp(overrides = {}) {
   app.get('/catalog', ...guards, readLimiter, routes.catalog);
   app.get('/usage', ...guards, readLimiter, routes.usage);
 
+  // Render API v2 (§4B) — те же guard'ы и лимитеры.
+  app.post('/uploads', ...guards, createLimiter, render.uploads);
+  app.post('/render', ...guards, createLimiter, render.render);
+  app.get('/jobs/:id', ...guards, readLimiter, render.job);
+  app.post('/jobs/:id/cancel', ...guards, readLimiter, render.cancel);
+  app.get('/download', ...guards, readLimiter, render.download);
+
+  // Канал прогресса worker'а: только по токену worker'а (§4B.6), без App
+  // Check и без Firebase Auth (это не пользовательский запрос).
+  app.post(
+    '/internal/render/progress',
+    workerTokenGuard({ token: config.render.workerToken }),
+    renderProgressHandler({ renderService }),
+  );
+
   app.use((req, _res, next) => next(new ApiError('ANALYSIS_NOT_FOUND', 'Маршрут не найден.')));
   app.use(errorHandler);
 
-  return { app, config, store, service, quota, taskQueue };
+  return { app, config, store, service, quota, taskQueue, renderService };
 }

@@ -177,6 +177,29 @@ export function internalGuard({ verifier, audience }) {
 }
 
 /**
+ * Middleware канала прогресса worker'а (§4B.6). Принимает ТОЛЬКО валидный
+ * общий токен (тот же секрет, что у worker-v2). Сравнение постоянного времени,
+ * токен наружу и в лог не уходит.
+ */
+export function workerTokenGuard({ token }) {
+  const expected = (token || '').trim();
+  return (req, _res, next) => {
+    const got = (bearerToken(req) || '').trim();
+    if (!expected || got.length !== expected.length || !timingSafeEqualStr(got, expected)) {
+      return next(new ApiError('UNAUTHENTICATED', 'Канал прогресса недоступен.'));
+    }
+    return next();
+  };
+}
+
+/** Сравнение строк без утечки длины совпадения по времени. */
+function timingSafeEqualStr(a, b) {
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i % b.length);
+  return diff === 0;
+}
+
+/**
  * Проверка владения объектом (§3 долга — изоляция по uid).
  *
  * Схему путей задаёт сервер, и в неё зашит проверенный uid. Клиент не может

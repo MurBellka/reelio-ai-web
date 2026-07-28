@@ -79,8 +79,10 @@ export class MemoryStore {
 
   constructor() {
     this.analyses = new Map(); // fingerprint → MediaAnalysis (кэш §5)
-    this.jobs = new Map(); // jobId → job
-    this.jobsByFingerprint = new Map(); // requestFingerprint → jobId
+    this.jobs = new Map(); // jobId → job анализа
+    this.jobsByFingerprint = new Map(); // requestFingerprint → jobId анализа
+    this.renderJobs = new Map(); // jobId → задача рендера (§4B.3)
+    this.renderJobsByFingerprint = new Map(); // fingerprint → jobId рендера
     this.counters = new Map(); // docId → { count }
     this.tail = Promise.resolve();
   }
@@ -127,6 +129,31 @@ export class MemoryStore {
   countActiveJobs(uid) {
     let active = 0;
     for (const job of this.jobs.values()) {
+      if (job.uid === uid && !TERMINAL_STATUSES.has(job.status)) active += 1;
+    }
+    return active;
+  }
+
+  // ── Задачи рендера (§4B.3) ────────────────────────────────────────────────
+
+  getRenderJob(jobId) {
+    return this.renderJobs.get(jobId) ?? null;
+  }
+
+  findRenderJobByFingerprint(fingerprint) {
+    const jobId = this.renderJobsByFingerprint.get(fingerprint);
+    return jobId ? this.getRenderJob(jobId) : null;
+  }
+
+  putRenderJob(job) {
+    this.renderJobs.set(job.id, job);
+    if (job.fingerprint) this.renderJobsByFingerprint.set(job.fingerprint, job.id);
+    return job;
+  }
+
+  countActiveRenderJobs(uid) {
+    let active = 0;
+    for (const job of this.renderJobs.values()) {
       if (job.uid === uid && !TERMINAL_STATUSES.has(job.status)) active += 1;
     }
     return active;

@@ -21,6 +21,14 @@ export const ERROR_CATALOG = {
   ANALYSIS_ALREADY_TERMINAL: { status: 409, retryable: false },
   IDEMPOTENCY_KEY_REUSED: { status: 409, retryable: false },
 
+  // Render API (§4B).
+  JOB_NOT_FOUND: { status: 404, retryable: false },
+  JOB_ALREADY_TERMINAL: { status: 409, retryable: false },
+  RESULT_EXPIRED: { status: 410, retryable: false },
+  RENDER_NOT_CONFIGURED: { status: 503, retryable: false },
+  TOO_MANY_ACTIVE_JOBS: { status: 429, retryable: true },
+  RENDER_FAILED: { status: 500, retryable: true },
+
   LIMIT_EXCEEDED: { status: 400, retryable: false },
   DAILY_LIMIT_REACHED: { status: 429, retryable: false },
   PROJECT_LIMIT_REACHED: { status: 429, retryable: false },

@@ -116,6 +116,8 @@ export function loadConfig(env = process.env) {
       publicBaseUrl: env.PUBLIC_BASE_URL || '',
       /** Через сколько дней истекает результат рендера (§6). */
       resultTtlDays: int(env, 'RENDER_RESULT_TTL_DAYS', 7),
+      /** Один активный рендер на пользователя — ограничитель расхода (§8 беты). */
+      maxActivePerUser: int(env, 'MAX_ACTIVE_RENDERS_PER_USER', 1),
     },
   };
 }
