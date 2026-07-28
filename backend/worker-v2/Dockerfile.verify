@@ -37,6 +37,10 @@ RUN ffmpeg -hide_banner -filters 2>/dev/null | grep -q ' subtitles ' \
  || (echo 'ffmpeg собран без libass — фильтр subtitles недоступен' && exit 1)
 RUN fc-list | grep -qi montserrat \
  || (echo 'шрифт Montserrat не найден в /usr/share/fonts/truetype/reelio' && exit 1)
+# Отдельное имя Medium обязано индексироваться: по нему libass берёт реальный
+# файл Medium, иначе вес medium молча деградирует в Regular.
+RUN fc-list | grep -qi 'montserrat medium' \
+ || (echo 'начертание «Montserrat Medium» не проиндексировано fontconfig' && exit 1)
 
 ENV REELIO_FONTS_DIR=/usr/share/fonts/truetype/reelio
 

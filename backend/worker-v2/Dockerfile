@@ -41,6 +41,19 @@ COPY assets/fonts/ /usr/share/fonts/truetype/reelio/
 # сканирует только их, и шрифт вне такого каталога libass не найдёт по имени.
 RUN fc-cache -f
 
+# Обязательные проверки окружения — те же, что в Dockerfile.verify. Без них
+# смена базового образа могла бы молча выкатить сборку ffmpeg без libass или
+# без шрифтов: тогда worker не падает, а тихо отдаёт ролик без подписей.
+# 1) фильтр subtitles (то есть libass) присутствует;
+RUN ffmpeg -hide_banner -filters 2>/dev/null | grep -q ' subtitles ' \
+ || (echo 'ffmpeg собран без libass — фильтр subtitles недоступен' && exit 1)
+# 2) базовое семейство каталога установлено и видно fontconfig;
+RUN fc-list | grep -qi 'montserrat' \
+ || (echo 'шрифт Montserrat не найден в /usr/share/fonts/truetype/reelio' && exit 1)
+# 3) отдельное имя Medium индексируется — иначе вес medium молча стал бы Regular.
+RUN fc-list | grep -qi 'montserrat medium' \
+ || (echo 'начертание «Montserrat Medium» не проиндексировано fontconfig — medium выпал бы в Regular' && exit 1)
+
 # Непривилегированный пользователь: worker'у не нужен root ни для чего.
 RUN useradd --system --uid 10001 --create-home --home-dir /home/worker worker \
  && mkdir -p /work \

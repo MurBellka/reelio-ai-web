@@ -110,6 +110,45 @@ export function coversText(buffer, text) {
   return { ok: missing.length === 0, missing };
 }
 
+/** Декодирует одну запись таблицы `name` в строку. */
+function decodeNameRecord(buffer, platformId, offset, length) {
+  const raw = buffer.subarray(offset, offset + length);
+  // Платформа 3 (Windows) хранит строки в UTF-16BE, платформа 1 — в ASCII.
+  // Node умеет только UTF-16LE, поэтому пары байт читаем сами.
+  if (platformId !== 3) return raw.toString('latin1');
+  let text = '';
+  for (let i = 0; i + 1 < raw.length; i += 2) text += String.fromCharCode(raw.readUInt16BE(i));
+  return text;
+}
+
+/**
+ * Все строки таблицы `name` для указанных nameID → Set.
+ * По умолчанию — семейственные имена: 1 (Family), 4 (Full name),
+ * 16 (Typographic Family). Именно среди них libass ищет Fontname.
+ */
+export function nameStrings(buffer, nameIds = [1, 4, 16]) {
+  const wanted = new Set(nameIds);
+  const result = new Set();
+  const name = readTableDirectory(buffer).get('name');
+  if (!name) return result;
+
+  const count = buffer.readUInt16BE(name.offset + 2);
+  const stringOffset = name.offset + buffer.readUInt16BE(name.offset + 4);
+
+  for (let i = 0; i < count; i += 1) {
+    const rec = name.offset + 6 + i * 12;
+    const platformId = buffer.readUInt16BE(rec);
+    const nameId = buffer.readUInt16BE(rec + 6);
+    if (!wanted.has(nameId)) continue;
+
+    const length = buffer.readUInt16BE(rec + 8);
+    const offset = stringOffset + buffer.readUInt16BE(rec + 10);
+    const text = decodeNameRecord(buffer, platformId, offset, length);
+    if (text) result.add(text);
+  }
+  return result;
+}
+
 /** Имя семейства из таблицы `name` (nameID 1) — сверка с каталогом. */
 export function familyName(buffer) {
   const name = readTableDirectory(buffer).get('name');
@@ -126,14 +165,7 @@ export function familyName(buffer) {
 
     const length = buffer.readUInt16BE(rec + 8);
     const offset = stringOffset + buffer.readUInt16BE(rec + 10);
-    const raw = buffer.subarray(offset, offset + length);
-
-    // Платформа 3 (Windows) хранит строки в UTF-16BE, платформа 1 — в ASCII.
-    // Node умеет только UTF-16LE, поэтому пары байт читаем сами.
-    if (platformId !== 3) return raw.toString('latin1');
-    let text = '';
-    for (let i = 0; i + 1 < raw.length; i += 2) text += String.fromCharCode(raw.readUInt16BE(i));
-    return text;
+    return decodeNameRecord(buffer, platformId, offset, length);
   }
   return null;
 }

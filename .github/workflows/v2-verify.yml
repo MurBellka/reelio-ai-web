@@ -98,5 +98,11 @@ jobs:
       - name: Проверить видимость русского текста
         run: docker run --rm reelio-worker-v2-verify
 
+      # Отдельная пиксельная проверка: regular/medium/bold доходят до MP4 как
+      # РАЗНЫЕ начертания (medium не выпадает в Regular). Тот же образ, другая
+      # точка входа.
+      - name: Проверить веса regular/medium/bold в экспорте
+        run: docker run --rm --entrypoint node reelio-worker-v2-verify tools/verify-weights.mjs
+
       - name: Собрать рабочий образ worker-v2
         run: docker build -f backend/worker-v2/Dockerfile -t reelio-ffmpeg-worker-v2 .

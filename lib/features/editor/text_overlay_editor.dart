@@ -24,10 +24,12 @@ Color colorFromHex(String hex) {
   return v == null ? Colors.white : Color(0xFF000000 | v);
 }
 
+// Веса точно соответствуют файлам, объявленным в pubspec (400/500/700), чтобы
+// Flutter брал реальный Medium, а не округлял к соседнему начертанию.
 FontWeight _weightOf(TextWeight w) => switch (w) {
   TextWeight.regular => FontWeight.w400,
-  TextWeight.medium => FontWeight.w600,
-  TextWeight.bold => FontWeight.w900,
+  TextWeight.medium => FontWeight.w500,
+  TextWeight.bold => FontWeight.w700,
 };
 
 TextAlign _alignOf(TextAlignH a) => switch (a) {
@@ -194,6 +196,9 @@ class _DraggableOverlayState extends State<_DraggableOverlay> {
               o.text.isEmpty ? 'Текст' : o.text,
               textAlign: _alignOf(o.align),
               style: TextStyle(
+                // Реальное семейство §5 — предпросмотр совпадает с MP4, без
+                // молчаливого системного шрифта.
+                fontFamily: o.fontId.family,
                 color: colorFromHex(o.colorHex),
                 fontSize: fontSize.clamp(10.0, 200.0),
                 fontWeight: _weightOf(o.fontWeight),
@@ -290,6 +295,8 @@ class _TemplateCard extends StatelessWidget {
                 child: Text(
                   'Aa',
                   style: TextStyle(
+                    // Карточка шаблона показывает его настоящий шрифт и вес.
+                    fontFamily: template.fontId.family,
                     color: colorFromHex(template.colorHex),
                     fontWeight: _weightOf(template.weight),
                     fontSize: 30,

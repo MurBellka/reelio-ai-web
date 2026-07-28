@@ -141,10 +141,12 @@ describe('запуск из дерева образа', { skip: available ? fals
     await cp(path.join(WORKER_ROOT, 'src'), path.join(app, 'src'), { recursive: true });
     await cp(path.join(REPO_ROOT, 'assets/fonts'), fonts, { recursive: true });
 
-    // Шрифты каталога обязаны оказаться в образе.
+    // Шрифты каталога обязаны оказаться в образе — все файлы всех начертаний.
     const copied = new Set(await readdir(fonts));
     for (const entry of Object.values(FONT_CATALOG)) {
-      assert.ok(copied.has(entry.files.regular), `в образе нет ${entry.files.regular}`);
+      for (const { file } of Object.values(entry.weights)) {
+        assert.ok(copied.has(file), `в образе нет ${file}`);
+      }
     }
 
     // ── Готовим задачу в local mode ─────────────────────────────────────

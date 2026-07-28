@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
 import '../models/enums.dart';
+import '../models/font_catalog.dart';
 import '../models/media_asset.dart';
 import 'platform_media.dart';
 
@@ -165,12 +166,15 @@ class _CaptionText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = Theme.of(context).textTheme.titleMedium!;
+    // Тот же шрифт субтитров (§6, default inter) и веса, что уйдут в MP4.
+    final base = Theme.of(
+      context,
+    ).textTheme.titleMedium!.copyWith(fontFamily: kCaptionPreviewFont.family);
     final resolved = switch (style) {
-      CaptionStyle.clean => base.copyWith(fontWeight: FontWeight.w600),
-      CaptionStyle.bold => base.copyWith(fontWeight: FontWeight.w900),
+      CaptionStyle.clean => base.copyWith(fontWeight: FontWeight.w500),
+      CaptionStyle.bold => base.copyWith(fontWeight: FontWeight.w700),
       CaptionStyle.karaoke => base.copyWith(
-        fontWeight: FontWeight.w800,
+        fontWeight: FontWeight.w700,
         letterSpacing: 0.5,
       ),
     };

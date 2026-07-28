@@ -115,12 +115,25 @@ test('minimal тоньше и без обводки, bold крупнее и жи
   assert.ok(outlineOf('bold') > 0);
 });
 
-test('шрифт субтитров берётся из каталога §5', () => {
-  assert.match(toAss([], { ...base, fontId: 'montserrat' }), /^Style: Reelio,Montserrat,/m);
+test('шрифт субтитров берётся из каталога §5 с точным именем начертания', () => {
+  // clean/minimal — начертание medium: у него ОТДЕЛЬНОЕ имя семейства, иначе
+  // libass взял бы Regular.
+  assert.match(
+    toAss([], { ...base, style: 'clean', fontId: 'montserrat' }),
+    /^Style: Reelio,Montserrat Medium,/m,
+  );
+  // bold/karaoke — базовое имя семейства плюс флаг Bold.
+  assert.match(
+    toAss([], { ...base, style: 'bold', fontId: 'montserrat' }),
+    /^Style: Reelio,Montserrat,/m,
+  );
 });
 
 test('неизвестный шрифт откатывается к умолчанию', () => {
-  assert.match(toAss([], { ...base, fontId: 'нет-такого' }), /^Style: Reelio,Inter,/m);
+  assert.match(
+    toAss([], { ...base, style: 'clean', fontId: 'нет-такого' }),
+    /^Style: Reelio,Inter Medium,/m,
+  );
 });
 
 test('позиция задаёт код выравнивания ASS', () => {
