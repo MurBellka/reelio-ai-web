@@ -211,10 +211,15 @@ export class AnalysisService {
       const current = await tx.getJob(analysisId);
       if (TERMINAL_STATUSES.has(current.status)) return current;
 
+      // Возврат всех списанных кредитов ОДНОЙ операцией: цикл refund'ов дал бы
+      // чтение после записи и сломал транзакцию Firestore.
       if (current.creditsSpent > 0) {
-        for (let i = 0; i < current.creditsSpent; i += 1) {
-          await this.quota.refund(tx, { uid, projectId: current.projectId, now: this.now() });
-        }
+        await this.quota.refund(tx, {
+          uid,
+          projectId: current.projectId,
+          now: this.now(),
+          count: current.creditsSpent,
+        });
       }
 
       const now = this.now().toISOString();
@@ -362,8 +367,10 @@ export class AnalysisService {
 
         // Квота списывается ровно перед платной работой и в одной транзакции.
         await this.store.runTransaction(async (tx) => {
-          await this.quota.charge(tx, { uid, projectId, now: this.now() });
+          // Все чтения ДО записей (getJob, затем чтения счётчиков внутри
+          // charge) — требование транзакций Firestore.
           const job = await tx.getJob(jobId);
+          await this.quota.charge(tx, { uid, projectId, now: this.now() });
           await tx.putJob({ ...job, creditsSpent: (job.creditsSpent ?? 0) + 1 });
         });
         credits += 1;

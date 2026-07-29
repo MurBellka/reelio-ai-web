@@ -257,14 +257,21 @@ export function buildQuotaOps({ limits, store }) {
       return { user: userCount + 1, project: projectCount + 1 };
     },
 
-    /** Возврат квоты: за отменённую работу платить не должны. */
-    async refund(tx, { uid, projectId, now = new Date() }) {
+    /**
+     * Возврат квоты: за отменённую работу платить не должны. [count] единиц.
+     *
+     * ВСЕ чтения идут до ВСЕХ записей — иначе транзакция Firestore падает
+     * («reads must precede writes»). MemoryStore к порядку безразличен.
+     */
+    async refund(tx, { uid, projectId, now = new Date(), count = 1 }) {
       const day = dayKey(now);
       const uDoc = userDoc(uid, day);
       const pDoc = projectDoc(uid, projectId, day);
 
-      await tx.writeCounter(uDoc, Math.max(0, (await tx.readCounter(uDoc)) - 1));
-      await tx.writeCounter(pDoc, Math.max(0, (await tx.readCounter(pDoc)) - 1));
+      const cu = await tx.readCounter(uDoc);
+      const cp = await tx.readCounter(pDoc);
+      await tx.writeCounter(uDoc, Math.max(0, cu - count));
+      await tx.writeCounter(pDoc, Math.max(0, cp - count));
     },
   };
 }

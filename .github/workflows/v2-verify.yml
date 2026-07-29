@@ -38,17 +38,30 @@ jobs:
         with:
           node-version: '22'
 
+      # Java нужна Firestore emulator'у (§4D.1). firebase-tools требует JDK 21+.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       # ffmpeg из репозиториев Ubuntu собран с libass и libx264 — этого
       # достаточно и для e2e рендера, и для проверки текста.
       # Шрифты обязательны: раннер по умолчанию почти пуст, а ffmpeg здесь
       # собран С libass — и фильтр subtitles на пустом наборе шрифтов падает,
       # а не деградирует. Production-образ worker'а ставит те же fonts-dejavu-core,
       # поэтому джоба тестов должна воспроизводить его окружение.
+      #
+      # Плюс каталог шрифтов §5 (assets/fonts) — их использует герметичный
+      # e2e-рендер (§4D.2), где worker-v2 вшивает русский TextOverlay.
       - name: Установить ffmpeg и шрифты
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core fontconfig
-          fc-list | wc -l
+          sudo mkdir -p /usr/share/fonts/truetype/reelio
+          sudo cp assets/fonts/*.ttf /usr/share/fonts/truetype/reelio/
+          sudo fc-cache -f
+          fc-list | grep -qi 'montserrat medium' \
+            || (echo 'каталог шрифтов не проиндексирован' && exit 1)
           ffmpeg -hide_banner -version | head -1
           ffmpeg -hide_banner -filters | grep -q ' subtitles ' \
             || (echo 'ffmpeg без libass' && exit 1)
@@ -65,12 +78,18 @@ jobs:
         working-directory: backend/worker-v2
         run: npm test
 
-      - name: beta backend
+      # beta прогоняется ПОД Firestore emulator (§4D.1): REELIO_REQUIRE_EMULATOR=1
+      # делает пропуск firestore-store.test ошибкой, а сам эмулятор поднимает
+      # firebase-tools через emulators:exec. Реальные облачные ресурсы не
+      # используются — demo-проект и локальный порт.
+      - name: beta backend (+ Firestore emulator)
         if: always()
         working-directory: backend/beta
         run: |
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
-          npm test
+          npm i -g firebase-tools >/dev/null 2>&1
+          firebase emulators:exec --only firestore --project demo-reelio \
+            'REELIO_REQUIRE_EMULATOR=1 GOOGLE_CLOUD_PROJECT=demo-reelio npm test'
 
       # Расхождения между сборками FFmpeg: печатает, ЧТО именно не сошлось.
       # Запускается всегда — на зелёном прогоне это просто строка «пройдено».

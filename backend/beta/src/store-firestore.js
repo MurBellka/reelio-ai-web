@@ -145,4 +145,10 @@ export class FirestoreStore {
   async getRenderJob(jobId) {
     return this.#get(COL.renderJobs, jobId);
   }
+
+  /** Нетранзакционное чтение счётчика — для показа остатка квоты (quota.usage). */
+  async readCounter(docId) {
+    const data = await this.#get(COL.counters, docId);
+    return data?.count ?? 0;
+  }
 }
