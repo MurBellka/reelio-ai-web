@@ -6,6 +6,7 @@ import '../models/edit_request.dart';
 import '../models/enums.dart';
 import '../models/export_settings.dart';
 import '../models/media_asset.dart';
+import '../models/upload_ticket.dart' show UploadProgress;
 
 /// Наибольшая сторона среди исходников — прокси максимально доступного
 /// вертикального разрешения для экспорта. `null`, если размеры неизвестны.
@@ -18,12 +19,64 @@ int? sourceMaxHeightOf(List<MediaAsset> assets) {
   return best;
 }
 
+/// Этап планирования, о котором сервис сообщает наружу.
+enum ProcessingPhase {
+  /// Прямая загрузка исходников в хранилище (прогресс по переданным байтам).
+  uploading,
+
+  /// AI-анализ загруженных материалов (серверные phase/fraction).
+  analyzing,
+}
+
+/// Прогресс планирования для экрана обработки.
+///
+/// Два этапа не смешиваются: у загрузки — реальный побайтовый [upload], у
+/// анализа — серверные [analysisPhase]/[analysisFraction]. Мок и v1 сообщают
+/// только «анализируем»: у них нет отдельной загрузки в бакет.
+class ProcessingProgress {
+  const ProcessingProgress.uploading(this.upload)
+    : phase = ProcessingPhase.uploading,
+      analysisPhase = '',
+      analysisMessage = '',
+      analysisFraction = 0;
+
+  const ProcessingProgress.analyzing({
+    this.analysisPhase = '',
+    this.analysisMessage = '',
+    this.analysisFraction = 0,
+  }) : phase = ProcessingPhase.analyzing,
+       upload = UploadProgress.empty;
+
+  final ProcessingPhase phase;
+
+  /// Осмысленно на этапе [ProcessingPhase.uploading].
+  final UploadProgress upload;
+
+  /// Серверный идентификатор фазы анализа (для журналирования/отладки).
+  final String analysisPhase;
+
+  /// Человеческое описание фазы анализа (показываем пользователю).
+  final String analysisMessage;
+
+  /// Доля анализа 0..1, как её отдаёт сервер.
+  final double analysisFraction;
+}
+
+/// Приёмник прогресса планирования. По умолчанию — no-op (для вызовов без UI).
+typedef ProcessingReporter = void Function(ProcessingProgress progress);
+
 /// Абстракция AI-планировщика монтажа.
 ///
 /// UI зависит только от этого интерфейса. Позднее реализацию легко заменить
 /// на настоящий HTTP-клиент к серверному API без изменения экранов.
 abstract class AiEditingService {
-  Future<EditPlan> createEditPlan(EditRequest request);
+  /// [onProgress] — необязательный приёмник этапов загрузки и анализа. Вызовы
+  /// без UI могут его не передавать; сервисы без реальной загрузки сообщают
+  /// только этап анализа.
+  Future<EditPlan> createEditPlan(
+    EditRequest request, {
+    ProcessingReporter? onProgress,
+  });
 
   /// Отменяет текущий запрос. Для мока — no-op.
   void cancel() {}
@@ -58,7 +111,18 @@ class MockAiEditingService implements AiEditingService {
   void cancel() {}
 
   @override
-  Future<EditPlan> createEditPlan(EditRequest request) async {
+  Future<EditPlan> createEditPlan(
+    EditRequest request, {
+    ProcessingReporter? onProgress,
+  }) async {
+    // У мока нет реальной загрузки — сообщаем только этап анализа, чтобы экран
+    // обработки показал корректный этап, а не пустоту.
+    onProgress?.call(
+      const ProcessingProgress.analyzing(
+        analysisPhase: 'analyzing',
+        analysisMessage: 'Собираем ролик',
+      ),
+    );
     // Небольшая задержка имитирует сетевой вызов; основная анимация прогресса
     // живёт на экране обработки, чтобы не запускать два процесса сразу.
     await Future<void>.delayed(const Duration(milliseconds: 250));

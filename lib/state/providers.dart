@@ -12,6 +12,7 @@ import '../models/project_state.dart';
 import '../models/text_overlay.dart';
 import '../models/transition.dart';
 import '../models/upload_manifest.dart';
+import '../models/upload_ticket.dart' show UploadProgress;
 import '../services/ai_editing_service.dart';
 import '../services/analysis_api_client.dart';
 import 'auth_providers.dart';
@@ -51,7 +52,12 @@ final aiServiceProvider = Provider<AiEditingService>((ref) {
     final service = BetaAiEditingService(
       client: ref.watch(analysisApiClientProvider),
       projectId: ref.read(projectProvider).id,
-      uploadAssets: (request) => _uploadForBeta(ref, request),
+      uploadAssets: (request, {onProgress, isCancelled}) => _uploadForBeta(
+        ref,
+        request,
+        onProgress: onProgress,
+        isCancelled: isCancelled,
+      ),
     );
     ref.onDispose(service.cancel);
     return service;
@@ -70,7 +76,12 @@ final aiServiceProvider = Provider<AiEditingService>((ref) {
 /// Загрузка материалов для анализа beta через ЕДИНЫЙ координатор (§4D.3):
 /// уже загруженные материалы переиспользуются, новые грузятся один раз и
 /// попадают в манифест — рендер потом не грузит их повторно.
-Future<Map<String, String>> _uploadForBeta(Ref ref, EditRequest request) async {
+Future<Map<String, String>> _uploadForBeta(
+  Ref ref,
+  EditRequest request, {
+  void Function(UploadProgress progress)? onProgress,
+  bool Function()? isCancelled,
+}) async {
   final uid = ref.read(currentUidProvider) ?? '';
   final project = ref.read(projectProvider);
   final coordinator = ref.read(uploadCoordinatorProvider);
@@ -79,6 +90,8 @@ Future<Map<String, String>> _uploadForBeta(Ref ref, EditRequest request) async {
     manifest: project.uploadManifest,
     ownerUid: uid,
     projectId: project.id,
+    onProgress: onProgress,
+    isCancelled: isCancelled,
   );
   ref.read(projectProvider.notifier).recordUploads(result.uploaded);
   return result.objectPaths;
@@ -96,11 +109,13 @@ class _BetaUnavailableService implements AiEditingService {
   void cancel() {}
 
   @override
-  Future<EditPlan> createEditPlan(EditRequest request) async =>
-      throw const AiEditingException(
-        'Бета недоступна: не задан адрес beta-сервиса. '
-        'Обновите приложение или попробуйте позже.',
-      );
+  Future<EditPlan> createEditPlan(
+    EditRequest request, {
+    ProcessingReporter? onProgress,
+  }) async => throw const AiEditingException(
+    'Бета недоступна: не задан адрес beta-сервиса. '
+    'Обновите приложение или попробуйте позже.',
+  );
 }
 
 final exportServiceProvider = Provider<VideoExportService>(

@@ -2,14 +2,21 @@ import 'dart:async';
 
 import '../models/edit_plan.dart';
 import '../models/edit_request.dart';
+import '../models/upload_ticket.dart' show UploadProgress;
 import 'ai_editing_service.dart';
 import 'analysis_api_client.dart';
 
 /// Загружает материалы запроса и возвращает assetId → objectPath.
 ///
 /// Вынесено интерфейсом, чтобы планировщик тестировался без реального аплоада.
+/// [onProgress] сообщает побайтовый прогресс загрузки, [isCancelled] позволяет
+/// прервать её кооперативно.
 typedef AssetUploader =
-    Future<Map<String, String>> Function(EditRequest request);
+    Future<Map<String, String>> Function(
+      EditRequest request, {
+      void Function(UploadProgress progress)? onProgress,
+      bool Function()? isCancelled,
+    });
 
 /// Планировщик v2 через beta backend (§4C.6): загрузка материалов →
 /// `POST /analysis` → опрос статуса → `POST /analysis/{id}/plan` → EditPlan v2.
@@ -43,11 +50,19 @@ class BetaAiEditingService implements AiEditingService {
   }
 
   @override
-  Future<EditPlan> createEditPlan(EditRequest request) async {
+  Future<EditPlan> createEditPlan(
+    EditRequest request, {
+    ProcessingReporter? onProgress,
+  }) async {
     _cancelled = false;
 
     // 1. Материалы должны быть в бакете, чтобы beta их проанализировала.
-    final objectPaths = await uploadAssets(request);
+    // Прогресс загрузки идёт по фактически переданным байтам.
+    final objectPaths = await uploadAssets(
+      request,
+      onProgress: (up) => onProgress?.call(ProcessingProgress.uploading(up)),
+      isCancelled: () => _cancelled,
+    );
     _throwIfCancelled();
 
     // 2. Создаём анализ по путям, выданным сервером.
@@ -73,9 +88,20 @@ class BetaAiEditingService implements AiEditingService {
       assets: assets,
     );
 
-    // 3. Ждём завершения анализа.
+    // 3. Ждём завершения анализа, сообщая серверные phase/fraction наружу.
+    void report(AnalysisStatus s) => onProgress?.call(
+      ProcessingProgress.analyzing(
+        analysisPhase: s.phase,
+        analysisMessage: s.message.isNotEmpty
+            ? s.message
+            : _phaseLabel(s.phase),
+        analysisFraction: s.progress,
+      ),
+    );
+
     final deadline = DateTime.now().add(pollTimeout);
     var status = await client.getStatus(analysisId);
+    report(status);
     while (!status.isTerminal) {
       _throwIfCancelled();
       if (DateTime.now().isAfter(deadline)) {
@@ -86,6 +112,7 @@ class BetaAiEditingService implements AiEditingService {
       await Future<void>.delayed(pollInterval);
       _throwIfCancelled();
       status = await client.getStatus(analysisId);
+      report(status);
     }
     if (!status.isSucceeded) {
       throw AiEditingException(
@@ -104,4 +131,14 @@ class BetaAiEditingService implements AiEditingService {
   void _throwIfCancelled() {
     if (_cancelled) throw const AiEditingException('Запрос отменён.');
   }
+
+  /// Человеческое имя фазы анализа, если сервер не прислал сообщение.
+  static String _phaseLabel(String phase) => switch (phase) {
+    'queued' => 'Анализ в очереди',
+    'probing' || 'downloading' => 'Читаем материалы',
+    'analyzing' || 'running' => 'Ищем лучшие моменты',
+    'planning' => 'Собираем монтаж',
+    'done' => 'Анализ завершён',
+    _ => 'AI анализирует материалы',
+  };
 }

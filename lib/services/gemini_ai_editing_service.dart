@@ -51,7 +51,18 @@ class GeminiAiEditingService implements AiEditingService {
   }
 
   @override
-  Future<EditPlan> createEditPlan(EditRequest request) async {
+  Future<EditPlan> createEditPlan(
+    EditRequest request, {
+    ProcessingReporter? onProgress,
+  }) async {
+    // v1 не грузит исходники отдельно (их отправляет сам /edit-plan) — сообщаем
+    // экрану обработки этап анализа.
+    onProgress?.call(
+      const ProcessingProgress.analyzing(
+        analysisPhase: 'analyzing',
+        analysisMessage: 'AI собирает монтажный план',
+      ),
+    );
     // Клиентский rate limit.
     final last = _lastRequest;
     if (last != null && DateTime.now().difference(last) < minInterval) {

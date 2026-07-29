@@ -59,7 +59,11 @@ class OnboardingScreen extends ConsumerWidget {
     final hasPlan = ref.read(projectProvider).plan != null;
     final route = switch (stage) {
       AppStage.onboarding || AppStage.upload => AppRoutes.upload,
-      AppStage.settings || AppStage.processing => AppRoutes.settings,
+      AppStage.settings => AppRoutes.settings,
+      // Обработку возобновляем на её экране: уже загруженные материалы (манифест)
+      // не грузятся повторно, а этап показывается верный. Готовый план — сразу
+      // предпросмотр.
+      AppStage.processing => hasPlan ? AppRoutes.preview : AppRoutes.processing,
       AppStage.preview ||
       AppStage.editor ||
       AppStage.export => hasPlan ? AppRoutes.preview : AppRoutes.settings,

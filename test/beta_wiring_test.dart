@@ -195,7 +195,7 @@ void main() {
       final service = BetaAiEditingService(
         client: AnalysisApiClient(baseUrl: _base, client: http0),
         projectId: 'p1',
-        uploadAssets: (request) async {
+        uploadAssets: (request, {onProgress, isCancelled}) async {
           uploaded = true;
           return {
             for (final a in request.assets)
@@ -236,7 +236,7 @@ void main() {
       final service = BetaAiEditingService(
         client: AnalysisApiClient(baseUrl: _base, client: http0),
         projectId: 'p1',
-        uploadAssets: (r) async => {
+        uploadAssets: (r, {onProgress, isCancelled}) async => {
           for (final a in r.assets)
             a.id: 'users/u/projects/p1/sources/${a.id}.mp4',
         },
