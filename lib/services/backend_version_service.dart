@@ -53,7 +53,7 @@ class BackendVersionService {
     this.timeout = const Duration(seconds: 8),
   }) : _client = client ?? http.Client(),
        _ownsClient = client == null,
-       _baseUrl = (baseUrl ?? AppConfig.backendBaseUrl).replaceAll(
+       _baseUrl = (baseUrl ?? AppConfig.activeBackendUrl).replaceAll(
          RegExp(r'/+$'),
          '',
        );

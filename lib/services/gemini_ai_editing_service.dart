@@ -24,7 +24,7 @@ class GeminiAiEditingService implements AiEditingService {
     this.timeout = AppConfig.requestTimeout,
     this.maxRetries = AppConfig.maxRetries,
     this.minInterval = AppConfig.minRequestInterval,
-  }) : _baseUrl = baseUrl ?? AppConfig.backendBaseUrl,
+  }) : _baseUrl = baseUrl ?? AppConfig.activeBackendUrl,
        _client = client ?? http.Client();
 
   /// Источник токенов. `/edit-plan` защищён так же, как остальной API:

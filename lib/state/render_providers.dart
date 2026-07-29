@@ -197,7 +197,7 @@ class RenderUiState {
 /// Адрес backend'а. Отдельный провайдер нужен ровно затем же, зачем и
 /// транспорт: тест задаёт окружение, а сборка клиента остаётся настоящей.
 final renderBaseUrlProvider = Provider<String>(
-  (ref) => AppConfig.backendBaseUrl,
+  (ref) => AppConfig.activeBackendUrl,
 );
 
 /// HTTP-транспорт для клиентов API.
@@ -315,6 +315,20 @@ class RenderController extends Notifier<RenderUiState> {
   Future<void> start() async {
     if (state.isBusy) return;
     _cancelRequested = false;
+
+    // §4C.7/§4C.8: при поднятом флаге v2 без адреса беты файлы не загружаем —
+    // ни на v1 (смешивание запрещено), ни «в никуда».
+    if (AppConfig.betaUnavailable) {
+      _fail(
+        const RenderError(
+          code: 'BETA_UNAVAILABLE',
+          message:
+              'Бета недоступна: не задан адрес beta-сервиса. '
+              'Материалы не загружены. Попробуйте позже.',
+        ),
+      );
+      return;
+    }
 
     final project = ref.read(projectProvider);
     final storage = ref.read(storageServiceProvider);

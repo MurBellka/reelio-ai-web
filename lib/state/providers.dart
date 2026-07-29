@@ -4,16 +4,22 @@ import 'package:uuid/uuid.dart';
 import '../core/app_config.dart';
 import '../core/media_validation.dart';
 import '../models/edit_plan.dart';
+import '../models/edit_request.dart';
 import '../models/enums.dart';
 import '../models/export_settings.dart';
 import '../models/media_asset.dart';
 import '../models/project_state.dart';
 import '../models/text_overlay.dart';
 import '../models/transition.dart';
+import '../models/render_request.dart';
 import '../services/ai_editing_service.dart';
+import '../services/analysis_api_client.dart';
 import 'auth_providers.dart';
+import '../services/beta_ai_editing_service.dart';
 import '../services/gemini_ai_editing_service.dart';
 import '../services/media_picker_service.dart';
+import '../services/media_upload_service.dart';
+import '../services/render_api_client.dart';
 import '../services/storage_service.dart';
 import '../services/video_export_service.dart';
 
@@ -23,12 +29,36 @@ final storageServiceProvider = Provider<StorageService>(
   (_) => const StorageService(),
 );
 
-/// Выбирает реальный Gemini-планировщик, если задан backend
-/// (`--dart-define=REELIO_BACKEND_URL=…`), иначе — мок (Demo Mode).
+/// Клиент analysis API беты (§4C.4). Токены берутся свежими на каждый запрос.
+final analysisApiClientProvider = Provider<AnalysisApiClient>((ref) {
+  final client = AnalysisApiClient(
+    baseUrl: AppConfig.betaBackendBaseUrl,
+    tokens: ref.watch(authTokensProvider),
+  );
+  ref.onDispose(client.close);
+  return client;
+});
+
+/// Выбор планировщика (§4C.2, §4C.7, §4C.8):
+///   • флаг v2 выключен → прежний v1 `/edit-plan` (Gemini), поведение как было;
+///   • флаг v2 включён без beta URL → недоступность беты (понятная ошибка);
+///   • флаг v2 включён с beta URL → analysis-пайплайн на beta, без смешивания;
+///   • backend'а нет вовсе → мок (Demo Mode).
 final aiServiceProvider = Provider<AiEditingService>((ref) {
+  if (AppConfig.betaUnavailable) {
+    return const _BetaUnavailableService();
+  }
+  if (AppConfig.isV2Active) {
+    final service = BetaAiEditingService(
+      client: ref.watch(analysisApiClientProvider),
+      projectId: ref.read(projectProvider).id,
+      uploadAssets: (request) => _uploadForBeta(ref, request),
+    );
+    ref.onDispose(service.cancel);
+    return service;
+  }
   if (AppConfig.hasBackend) {
-    // /edit-plan защищён так же, как остальной API: без токенов он ответит
-    // 401, и до Gemini запрос не дойдёт.
+    // v1: /edit-plan защищён так же, как остальной API; без токенов — 401.
     final service = GeminiAiEditingService(
       tokens: ref.watch(authTokensProvider),
     );
@@ -37,6 +67,70 @@ final aiServiceProvider = Provider<AiEditingService>((ref) {
   }
   return const MockAiEditingService();
 });
+
+/// Загрузка материалов для анализа beta: /uploads (пути от сервера) →
+/// прямая выгрузка байтов. Возвращает assetId → objectPath.
+Future<Map<String, String>> _uploadForBeta(Ref ref, EditRequest request) async {
+  final uid = ref.read(currentUidProvider) ?? '';
+  final project = ref.read(projectProvider);
+  final renderClient = RenderApiClient(
+    baseUrl: AppConfig.activeBackendUrl,
+    tokens: ref.read(authTokensProvider),
+  );
+  final uploader = MediaUploadService();
+  try {
+    final proposed = [
+      for (final a in request.assets)
+        RenderAsset(
+          id: a.id,
+          type: a.type,
+          objectPath: RenderAsset.proposedSourcePath(
+            ownerUid: uid,
+            projectId: project.id,
+            asset: a,
+          ),
+          durationSeconds: a.durationSeconds,
+          width: a.width,
+          height: a.height,
+        ),
+    ];
+    final tickets = await renderClient.requestUploadTickets(
+      projectId: project.id,
+      assets: proposed,
+      contentTypes: MediaUploadService.contentTypesOf(request.assets),
+    );
+    final objectPaths = {for (final t in tickets) t.assetId: t.objectPath};
+    await uploader.uploadAll(
+      assets: request.assets,
+      tickets: tickets,
+      onProgress: (_) {},
+      isCancelled: () => false,
+    );
+    return objectPaths;
+  } finally {
+    renderClient.close();
+    uploader.close();
+  }
+}
+
+/// Флаг v2 поднят, но адрес беты не задан: планирование недоступно, объясняем
+/// пользователю понятно (§4C.7).
+class _BetaUnavailableService implements AiEditingService {
+  const _BetaUnavailableService();
+
+  @override
+  bool get isDemo => false;
+
+  @override
+  void cancel() {}
+
+  @override
+  Future<EditPlan> createEditPlan(EditRequest request) async =>
+      throw const AiEditingException(
+        'Бета недоступна: не задан адрес beta-сервиса. '
+        'Обновите приложение или попробуйте позже.',
+      );
+}
 
 final exportServiceProvider = Provider<VideoExportService>(
   (_) => const MockVideoExportService(),

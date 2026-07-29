@@ -69,7 +69,7 @@ class RenderApiClient {
     this.maxRetries = AppConfig.maxRetries,
     this.appVersion = '1.0.0',
     this.tokens,
-  }) : _baseUrl = _normalizeBase(baseUrl ?? AppConfig.backendBaseUrl),
+  }) : _baseUrl = _normalizeBase(baseUrl ?? AppConfig.activeBackendUrl),
        _client = client ?? http.Client(),
        _ownsClient = client == null;
 
