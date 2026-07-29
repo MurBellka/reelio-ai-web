@@ -172,16 +172,71 @@ export class AnalysisService {
     if (created.isNew) {
       // §4A.7: не fire-and-forget, а долговечная очередь. HTTP-ответ уходит
       // сразу; обработчик запускается очередью и переживает перезапуск инстанса.
-      await this.taskQueue.enqueue({
-        kind: 'analysis.run',
-        jobId: created.job.id,
-        uid,
-        projectId,
-        assets,
-      });
+      try {
+        await this.taskQueue.enqueue({
+          kind: 'analysis.run',
+          jobId: created.job.id,
+          uid,
+          projectId,
+          assets,
+        });
+      } catch (err) {
+        // enqueue сорвался: задача НИКОГДА не выполнится. Нельзя оставлять её в
+        // `queued` — иначе она навсегда занимает active slot и висит у клиента.
+        const failed = await this.#failEnqueue(created.job.id, err);
+        return { job: failed ?? created.job, isNew: true };
+      }
     }
 
     return { job: created.job, isNew: created.isNew };
+  }
+
+  /**
+   * Обработка сорвавшегося enqueue (§4A.7). Задача не будет выполнена, поэтому
+   * переводим её в терминальное `failed` — это освобождает active slot
+   * (countActiveJobs не считает терминальные) — и возвращаем списанную квоту
+   * РОВНО ОДИН РАЗ (guard по терминальному статусу, как в cancelAnalysis).
+   * Наружу уходит безопасный retryable-код: сбой очереди почти всегда
+   * транзиентный, клиент может повторить. ALREADY_EXISTS сюда не попадает —
+   * очередь трактует его как идемпотентный успех.
+   */
+  async #failEnqueue(jobId, err) {
+    const api = toApiError(err);
+    this.logger?.warn?.('analysis enqueue failed', { jobId, code: api.code, detail: api.detail });
+
+    return this.store.runTransaction(async (tx) => {
+      const current = await tx.getJob(jobId);
+      // Уже терминальна (напр. параллельная отмена) — не трогаем и не
+      // возвращаем квоту повторно.
+      if (!current || TERMINAL_STATUSES.has(current.status)) return current;
+
+      // Возврат квоты одной операцией: reads-before-writes для Firestore.
+      if (current.creditsSpent > 0) {
+        await this.quota.refund(tx, {
+          uid: current.uid,
+          projectId: current.projectId,
+          now: this.now(),
+          count: current.creditsSpent,
+        });
+      }
+
+      const now = this.now().toISOString();
+      return tx.putJob({
+        ...current,
+        status: 'failed',
+        phase: 'failed',
+        progress: 0,
+        message: 'Не удалось поставить анализ в очередь',
+        error: {
+          code: 'ANALYSIS_ENQUEUE_FAILED',
+          message: 'Не удалось запустить анализ. Повторите попытку.',
+          retryable: true,
+        },
+        creditsSpent: 0,
+        updatedAt: now,
+        finishedAt: now,
+      });
+    });
   }
 
   /** Статус задачи с проверкой владения (§3). */
@@ -264,13 +319,20 @@ export class AnalysisService {
       }),
     );
 
-    await this.taskQueue.enqueue({
-      kind: 'analysis.run',
-      jobId: analysisId,
-      uid,
-      projectId: job.projectId,
-      assets,
-    });
+    try {
+      await this.taskQueue.enqueue({
+        kind: 'analysis.run',
+        jobId: analysisId,
+        uid,
+        projectId: job.projectId,
+        assets,
+      });
+    } catch (err) {
+      // Тот же инвариант, что и при создании: сорвавшийся re-enqueue не должен
+      // оставить задачу в `queued`.
+      const failed = await this.#failEnqueue(analysisId, err);
+      return { job: failed ?? revived, isNew: true };
+    }
     return { job: revived, isNew: true };
   }
 

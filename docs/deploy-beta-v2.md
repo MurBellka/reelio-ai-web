@@ -103,6 +103,43 @@ OIDC-токеном. Токен подписывается на `audience`, а `
 --region europe-west1 --format='value(status.url)'` — и присвоить **и**
 `INTERNAL_BASE_URL`, **и** `INTERNAL_OIDC_AUDIENCE` это одно значение.
 
+### Cloud Tasks: формат ID задачи
+
+Cloud Tasks разрешает в ID задачи **только** `[A-Za-z0-9_-]` (до 500 символов).
+ID собирается детерминированно из типа задачи и серверного `jobId` (см.
+`buildTaskId` в `src/tasks.js`):
+
+- **kind → префикс** из закрытого списка `TASK_KIND_PREFIXES`; сейчас
+  `analysis.run` → `analysis-run`. **Точку** (как в `analysis.run`) в ID
+  включать нельзя — именно она давала `INVALID_ARGUMENT`, и задача никогда не
+  ставилась. Неизвестный kind отклоняется **до** обращения к API.
+- **jobId → сегмент**: серверный `jobId` (напр. `an_01H8…`) используется как
+  есть — ID остаётся читаемым. Если jobId выходит за допустимый алфавит или
+  длину, берётся стабильный SHA-256 дайджест (base64url) с префиксом `d_`.
+- Итог: `analysis-run-<jobId|d_дайджест>`. Разные kind/jobId не дают одинаковый
+  ID; повтор (kind, jobId) даёт **тот же** ID — это ключ дедупликации.
+- Полное имя задачи строится официальным `client.taskPath(...)`
+  (`<queuePath>/tasks/<id>`), а не конкатенацией пользовательских строк.
+
+### Поведение при сбое enqueue
+
+Задача-документ коммитится как `queued` до постановки в очередь, поэтому сбой
+`createTask` не должен оставлять её висеть в `queued` (иначе она навсегда
+занимает active slot). При сбое enqueue (`createAnalysis`/`retryAnalysis`,
+`#failEnqueue`):
+
+- job переводится в терминальное **`failed`** → active slot освобождается
+  (`countActiveJobs` не считает терминальные);
+- в `error` записывается безопасный retryable-код **`ANALYSIS_ENQUEUE_FAILED`**
+  (HTTP 503, `retryable: true`);
+- списанная квота возвращается **ровно один раз** (guard по терминальному
+  статусу, как в `cancelAnalysis`);
+- повторный запрос с тем же `Idempotency-Key` находит failed-задачу и не
+  создаёт второго списания; явный `POST /analysis/{id}/retry` создаёт новую
+  рабочую попытку;
+- **`ALREADY_EXISTS`** для той же детерминированной задачи — это идемпотентный
+  **успех** (задача уже стоит), а не 500.
+
 Flutter (build-time, несекретные, §4C): `REELIO_BETA_BACKEND_URL`,
 `REELIO_V2_ENABLED` (по умолчанию `false`). Ключ Gemini во Flutter/GitHub-сборку
 НИКОГДА не передаётся.

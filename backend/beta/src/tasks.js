@@ -12,7 +12,98 @@
 //     переживает перезапуск инстанса — это и есть замена fire-and-forget,
 //     а НЕ `min-instances=1` (§4A.8).
 
+import { createHash } from 'node:crypto';
+
 import { INTERNAL_TASK_PATH } from './config.js';
+
+// ── Идентификатор задачи Cloud Tasks ────────────────────────────────────────
+//
+// Cloud Tasks разрешает в ID задачи ТОЛЬКО символы `[A-Za-z0-9_-]`, длиной до
+// 500. Точка (как в kind `analysis.run`) → INVALID_ARGUMENT, и задача НИКОГДА
+// не ставится (durable-анализ навсегда застревает в `queued`). Поэтому ID не
+// собирается «как есть» из пользовательского значения, а строится по правилам:
+//
+//   • kind отображается в безопасный префикс из ЗАКРЫТОГО списка; неизвестный
+//     kind отклоняется ДО обращения к API;
+//   • jobId (серверный) проверяется по допустимому алфавиту и длине; если он
+//     выходит за рамки — берётся стабильный SHA-256 дайджест (base64url),
+//     детерминированный и состоящий только из разрешённых символов;
+//   • ID = `<префикс kind>-<сегмент jobId>`: разные kind дают разные префиксы,
+//     разные jobId — разные сегменты, поэтому коллизий между задачами нет;
+//   • ID детерминирован по (kind, jobId) — это и есть ключ дедупликации/
+//     идемпотентности Cloud Tasks (повторный enqueue → ALREADY_EXISTS).
+
+/** Максимальная длина ID задачи Cloud Tasks. */
+export const TASK_ID_MAX_LENGTH = 500;
+
+const TASK_ID_ALLOWED = /^[A-Za-z0-9_-]+$/;
+
+/** Закрытое отображение известных типов задач → безопасный префикс ID. */
+export const TASK_KIND_PREFIXES = Object.freeze({
+  'analysis.run': 'analysis-run',
+});
+
+/** Неизвестный kind — дефект вызова, не пользовательская ошибка. */
+export class UnknownTaskKindError extends Error {
+  constructor(kind) {
+    super(`Неизвестный тип задачи Cloud Tasks: «${kind}».`);
+    this.name = 'UnknownTaskKindError';
+    this.code = 'INTERNAL';
+  }
+}
+
+function base64url(buffer) {
+  return buffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Безопасный сегмент из jobId. Обычный серверный jobId (короткий, только
+ * `[A-Za-z0-9_-]`) используется как есть — ID остаётся читаемым. Всё остальное
+ * (пусто, запрещённые символы, слишком длинное) заменяется стабильным
+ * дайджестом. Префикс `d_` отделяет дайджест от прямых значений, так что прямой
+ * jobId никогда не совпадёт с дайджестом другого jobId.
+ */
+function safeJobSegment(jobId, maxLength) {
+  const id = String(jobId ?? '');
+  if (id && TASK_ID_ALLOWED.test(id) && id.length <= maxLength) return id;
+  return `d_${base64url(createHash('sha256').update(id).digest())}`;
+}
+
+/**
+ * ID задачи Cloud Tasks для пары (kind, jobId). Детерминирован, содержит только
+ * разрешённые символы и укладывается в лимит длины. Неизвестный kind отклоняется
+ * ДО обращения к API.
+ *
+ * @param {string} kind тип задачи из TASK_KIND_PREFIXES
+ * @param {string} jobId серверный идентификатор задачи
+ * @returns {string} безопасный ID задачи
+ */
+export function buildTaskId(kind, jobId) {
+  const prefix = TASK_KIND_PREFIXES[kind];
+  if (!prefix) throw new UnknownTaskKindError(kind);
+  // Бюджет под сегмент: вычитаем префикс и разделитель. Дайджест (~45 символов)
+  // заведомо влезает, поэтому длинный jobId безопасно сворачивается.
+  const budget = TASK_ID_MAX_LENGTH - prefix.length - 1;
+  const id = `${prefix}-${safeJobSegment(jobId, budget)}`;
+  // Инвариант: результат обязан быть валиден. Нарушение — дефект этого кода.
+  if (!TASK_ID_ALLOWED.test(id) || id.length > TASK_ID_MAX_LENGTH) {
+    throw new Error(`Построен недопустимый Cloud Tasks ID: «${id}».`);
+  }
+  return id;
+}
+
+/**
+ * ALREADY_EXISTS от Cloud Tasks (gRPC-код 6): для детерминированного ID это НЕ
+ * ошибка, а признак идемпотентности — задача уже поставлена. Проверяем и
+ * числовой код, и строковую форму, и текст (разные версии SDK различаются).
+ */
+export function isAlreadyExistsError(err) {
+  return (
+    err?.code === 6 ||
+    err?.code === 'ALREADY_EXISTS' ||
+    /already[\s_-]?exists/i.test(String(err?.message ?? err ?? ''))
+  );
+}
 
 /**
  * Встроенная очередь. `handler(payload)` получает {..., attempt, maxAttempts}.
@@ -90,6 +181,11 @@ export class CloudTasksQueue {
     if (!queue || !internalUrl || !oidcAudience || !invokerServiceAccount) {
       throw new Error('CloudTasksQueue не сконфигурирована (queue/internalUrl/audience/SA).');
     }
+
+    // ID задачи строится и валидируется ДО обращения к API: неизвестный kind
+    // или недопустимый jobId не должны доходить до Cloud Tasks (§4A.6).
+    const taskId = payload.jobId != null ? buildTaskId(payload.kind, payload.jobId) : null;
+
     const client = await this.#ensureClient();
     const parent = client.queuePath(projectId, location, queue);
 
@@ -113,12 +209,31 @@ export class CloudTasksQueue {
         // origin, БЕЗ пути.
         oidcToken: { serviceAccountEmail: invokerServiceAccount, audience: oidcAudience },
       },
-      // Дедупликация: одинаковый payload той же задачи не создаёт дубль.
-      ...(payload.jobId ? { name: `${parent}/tasks/${payload.kind}-${payload.jobId}` } : {}),
+      // Дедупликация: детерминированный ID той же задачи не создаёт дубль.
+      // Полное имя строим официальным `taskPath` (parent + /tasks/<id>), а не
+      // конкатенацией пользовательских строк; при отсутствии taskPath у клиента
+      // (старые фейки в тестах) — тот же формат из официального parent + ID.
+      ...(taskId
+        ? {
+            name:
+              typeof client.taskPath === 'function'
+                ? client.taskPath(projectId, location, queue, taskId)
+                : `${parent}/tasks/${taskId}`,
+          }
+        : {}),
     };
 
-    const [created] = await client.createTask({ parent, task });
-    return { scheduled: true, name: created.name };
+    try {
+      const [created] = await client.createTask({ parent, task });
+      return { scheduled: true, name: created.name };
+    } catch (err) {
+      // Детерминированный ID → повторный enqueue той же задачи вернёт
+      // ALREADY_EXISTS. Это идемпотентный успех, а не сбой: задача уже стоит.
+      if (isAlreadyExistsError(err)) {
+        return { scheduled: true, name: task.name ?? null, alreadyExists: true };
+      }
+      throw err;
+    }
   }
 }
 

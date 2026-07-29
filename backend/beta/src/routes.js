@@ -19,6 +19,7 @@ import { ApiError } from './errors.js';
 import { ANALYSIS_QUOTA, ANALYSIS_LIMITS, COST_LIMITS, PROJECT_LIMITS } from './limits.js';
 import { normalizeOperations } from './operations.js';
 import { toPublicJob } from './analysis-service.js';
+import { TERMINAL_STATUSES } from './store.js';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -93,8 +94,11 @@ export function createAnalysisRoutes({ service, quota, limits }) {
         idempotencyKey,
       });
 
-      // 202 — приняли новую работу, 200 — вернули уже существующую.
-      res.status(isNew ? 202 : 200).json({ analysis: toPublicJob(job) });
+      // 202 — приняли новую работу в очередь; 200 — вернули уже существующую
+      // либо задачу, чей enqueue сорвался (она уже в терминальном `failed`, и
+      // тело несёт status/error). 202 для терминальной задачи было бы ложью.
+      const queued = isNew && !TERMINAL_STATUSES.has(job.status);
+      res.status(queued ? 202 : 200).json({ analysis: toPublicJob(job) });
     }),
 
     /** GET /analysis/:id */
