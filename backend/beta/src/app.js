@@ -175,7 +175,7 @@ export async function createApp(overrides = {}) {
   // Канал прогресса worker'а: только по токену worker'а (§4B.6), без App
   // Check и без Firebase Auth (это не пользовательский запрос).
   app.post(
-    '/internal/render/progress',
+    '/internal/render/jobs/:jobId/progress',
     workerTokenGuard({ token: config.render.workerToken }),
     renderProgressHandler({ renderService }),
   );

@@ -130,12 +130,16 @@ test('POST /render запускает ИСКЛЮЧИТЕЛЬНО worker-v2 и к
     assert.equal(launch.jobName, 'reelio-ffmpeg-worker-v2', 'только v2');
     assert.equal(launch.env.REELIO_CONTRACT_VERSION, '2');
     assert.match(launch.env.REELIO_PLAN_URI, /^gs:\/\/reelio-render-eu\/users\/user_1\/projects\/proj_r\/jobs\/.+\/plan\.json$/);
-    assert.match(launch.env.REELIO_PROGRESS_URL, /\/internal\/render\/progress$/);
+    assert.match(launch.env.REELIO_PROGRESS_URL, /\/internal\/render\/jobs\/.+\/progress$/);
 
-    // План физически положен в бакет по серверному пути.
+    // План физически положен в бакет по серверному пути, ВМЕСТЕ с assets
+    // (иначе worker-v2 не найдёт исходники).
     assert.equal(signer.written.length, 1);
     assert.match(signer.written[0].objectPath, /\/plan\.json$/);
     assert.equal(signer.written[0].data.contractVersion, 2);
+    assert.ok(Array.isArray(signer.written[0].data.assets), 'план несёт assets');
+    assert.equal(signer.written[0].data.assets[0].objectPath, ownedAssets()[0].objectPath);
+    assert.ok(signer.written[0].data.plan.clips.length > 0);
   } finally {
     await harness.close();
   }
@@ -200,46 +204,46 @@ test('прогресс: только с токеном worker; succeeded даё�
     });
     const jobId = created.body.jobId;
 
+    const progressPath = `/internal/render/jobs/${jobId}/progress`;
+
     // Без токена — 401.
-    const noAuth = await harness.request('POST', '/internal/render/progress', {
+    const noAuth = await harness.request('POST', progressPath, {
       uid: null,
       appCheck: null,
-      body: { jobId, phase: 'rendering', progress: 0.4 },
+      body: { phase: 'rendering', fraction: 0.5 },
     });
     assert.equal(noAuth.status, 401);
 
     // Неверный токен — 401.
-    const badAuth = await harness.request('POST', '/internal/render/progress', {
+    const badAuth = await harness.request('POST', progressPath, {
       uid: null,
       appCheck: null,
       headers: { Authorization: 'Bearer wrong' },
-      body: { jobId, phase: 'rendering', progress: 0.4 },
+      body: { phase: 'rendering', fraction: 0.5 },
     });
     assert.equal(badAuth.status, 401);
 
-    // Верный токен — прогресс принят.
-    const running = await harness.request('POST', '/internal/render/progress', {
+    // Верный токен — прогресс принят. Статус выводит backend по фазе.
+    const running = await harness.request('POST', progressPath, {
       uid: null,
       appCheck: null,
       headers: { Authorization: 'Bearer worker-secret' },
-      body: { jobId, phase: 'rendering', progress: 0.4, status: 'running' },
+      body: { phase: 'rendering', fraction: 0.5 },
     });
     assert.equal(running.status, 200);
 
     const job = await harness.request('GET', `/jobs/${jobId}`);
     assert.equal(job.body.status, 'running');
-    assert.ok(job.body.progress >= 0.4);
+    assert.ok(job.body.progress > 0.3);
 
-    // Успех с результатом.
-    await harness.request('POST', '/internal/render/progress', {
+    // Успех с результатом (worker шлёт phase:done + result).
+    await harness.request('POST', progressPath, {
       uid: null,
       appCheck: null,
       headers: { Authorization: 'Bearer worker-secret' },
       body: {
-        jobId,
         phase: 'done',
-        status: 'succeeded',
-        progress: 1,
+        fraction: 1,
         result: { sizeBytes: 123456, durationSeconds: 8, width: 1080, height: 1920, fps: 30 },
       },
     });
@@ -285,11 +289,11 @@ test('просроченный результат — 410 RESULT_EXPIRED', async
       body: { projectId: 'proj_r', plan: PLAN, assets: ownedAssets() },
     });
     const jobId = created.body.jobId;
-    await harness.request('POST', '/internal/render/progress', {
+    await harness.request('POST', `/internal/render/jobs/${jobId}/progress`, {
       uid: null,
       appCheck: null,
       headers: { Authorization: 'Bearer worker-secret' },
-      body: { jobId, phase: 'done', status: 'succeeded', progress: 1, result: { height: 1920 } },
+      body: { phase: 'done', fraction: 1, result: { height: 1920 } },
     });
 
     // Перематываем время за expiresAt (ttl 1 день).

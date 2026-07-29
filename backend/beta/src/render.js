@@ -219,12 +219,21 @@ export class RenderService {
 
     if (!created.isNew) return { job: created.job, isNew: false };
 
-    // План кладём в бакет и запускаем ТОЛЬКО worker-v2.
+    // План кладём в бакет и запускаем ТОЛЬКО worker-v2. В документе — и план,
+    // и `assets` (mediaId → objectPath): без них worker не найдёт исходники
+    // (plan.js: «В плане нет списка исходных материалов»).
     const paths = renderPaths(uid, projectId, created.job.id);
     await this.signer.writeJson({
       bucket: this.#bucket,
       objectPath: paths.planPath,
-      data: { contractVersion: 2, plan, export: created.job.export },
+      data: {
+        contractVersion: 2,
+        projectId,
+        jobId: created.job.id,
+        plan,
+        assets,
+        export: created.job.export,
+      },
     });
 
     const launched = await this.#launchWorkerV2(created.job, paths);
@@ -260,9 +269,10 @@ export class RenderService {
       REELIO_OUTPUT_PREFIX: paths.outputPrefix,
       REELIO_PROJECT_PREFIX: paths.projectPrefix,
       REELIO_JOB_PREFIX: paths.jobPrefix,
-      // Прогресс идёт на внутренний endpoint беты, worker аутентифицируется
-      // общим токеном (§4B.6). Токен worker берёт из своего секрета, не отсюда.
-      REELIO_PROGRESS_URL: `${(this.config.render.publicBaseUrl || '').replace(/\/+$/, '')}/internal/render/progress`,
+      // Прогресс идёт на внутренний endpoint беты; jobId — в ПУТИ (§8.1),
+      // worker аутентифицируется общим токеном (§4B.6). Токен worker берёт из
+      // своего секрета, не отсюда.
+      REELIO_PROGRESS_URL: `${(this.config.render.publicBaseUrl || '').replace(/\/+$/, '')}/internal/render/jobs/${job.id}/progress`,
     };
     return this.jobs.launch({ jobName, region: this.config.render.workerJobRegion, env });
   }
@@ -305,16 +315,24 @@ export class RenderService {
   }
 
   // ── Внутренний приём прогресса от worker'а (§4B.6) ────────────────────────
-  async applyProgress({ jobId, phase, progress, status, message, result, error }) {
+  //
+  // Форма — как у worker'а (§8.1): jobId в ПУТИ, тело несёт `phase` и `fraction`
+  // (доля ВНУТРИ этапа). Статус и глобальный прогресс выводит backend по
+  // каталогу фаз — worker про глобальную шкалу не знает.
+  async applyProgress({ jobId, phase, fraction, message, result, error }) {
     return this.store.runTransaction(async (tx) => {
       const job = await tx.getRenderJob(jobId);
       if (!job) throw new ApiError('JOB_NOT_FOUND', 'Задача рендера не найдена.');
       // Поздний прогресс отменённой/завершённой задачи игнорируем.
-      if (TERMINAL_STATUSES.has(job.status)) return job;
+      if (TERMINAL_STATUSES.has(job.status)) {
+        throw new ApiError('JOB_ALREADY_TERMINAL', 'Задача уже завершена.');
+      }
 
       const spec = RENDER_PHASES[phase] ?? RENDER_PHASES.queued;
-      const wireStatus = status ?? spec.status;
-      const nextProgress = Math.max(job.progress, Math.min(1, Number(progress) || spec.from));
+      const wireStatus = spec.status;
+      const f = Math.min(1, Math.max(0, Number(fraction) || 0));
+      const globalProgress = spec.from + (spec.to - spec.from) * f;
+      const nextProgress = Math.max(job.progress, globalProgress);
       const nowIso = this.now().toISOString();
       const terminal = TERMINAL_STATUSES.has(wireStatus);
 
@@ -330,7 +348,8 @@ export class RenderService {
               height: Number(result?.height) || 1920,
               fps: Number(result?.fps) || 30,
               videoCodec: result?.videoCodec ?? 'h264',
-              audioCodec: result?.audioCodec ?? 'aac',
+              // null сохраняем: при keepOriginal=false аудиопотока нет вовсе.
+              audioCodec: result?.audioCodec ?? null,
               checksumCrc32c: result?.checksumCrc32c ?? null,
               renderedAt: nowIso,
             }

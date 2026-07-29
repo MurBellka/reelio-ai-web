@@ -82,20 +82,23 @@ export function createRenderRoutes({ renderService }) {
   };
 }
 
-/** Внутренний приём прогресса worker'а — за workerTokenGuard (§4B.6). */
+/**
+ * Внутренний приём прогресса worker'а — за workerTokenGuard (§4B.6, §8.1).
+ * jobId в ПУТИ; тело — форма worker'а: {phase, fraction, message, result, error}.
+ * Ответ несёт cancelRequested, чтобы worker кооперативно остановился.
+ */
 export function renderProgressHandler({ renderService }) {
   return wrap(async (req, res) => {
     const body = req.body ?? {};
-    const jobId = requireId(body.jobId, 'jobId');
+    const jobId = requireId(req.params.jobId, 'jobId');
     const job = await renderService.applyProgress({
       jobId,
       phase: body.phase,
-      progress: body.progress,
-      status: body.status,
+      fraction: body.fraction,
       message: typeof body.message === 'string' ? body.message.slice(0, 300) : undefined,
       result: body.result,
       error: body.error,
     });
-    res.json({ ok: true, status: job.status });
+    res.json({ ok: true, status: job.status, cancelRequested: Boolean(job.cancelRequested) });
   });
 }

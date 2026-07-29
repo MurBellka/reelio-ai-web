@@ -88,8 +88,11 @@ jobs:
         run: |
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
           npm i -g firebase-tools >/dev/null 2>&1
+          # REELIO_REQUIRE_E2E=1 (§4D.2): герметичный e2e-рендер обязан
+          # выполниться (ffmpeg с libass + шрифты в этой джобе есть), пропуск —
+          # ошибка.
           firebase emulators:exec --only firestore --project demo-reelio \
-            'REELIO_REQUIRE_EMULATOR=1 GOOGLE_CLOUD_PROJECT=demo-reelio npm test'
+            'REELIO_REQUIRE_EMULATOR=1 REELIO_REQUIRE_E2E=1 GOOGLE_CLOUD_PROJECT=demo-reelio npm test'
 
       # Расхождения между сборками FFmpeg: печатает, ЧТО именно не сошлось.
       # Запускается всегда — на зелёном прогоне это просто строка «пройдено».
