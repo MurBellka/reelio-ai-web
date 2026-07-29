@@ -72,10 +72,36 @@ Firestore-индекс (композитный), нужен `countActive*`:
 Сервис: `REELIO_RUNTIME=cloud`, `GOOGLE_CLOUD_PROJECT`/`FIREBASE_PROJECT_ID`,
 `REELIO_STORE=firestore`, `APP_CHECK_MODE=monitor`, `BETA_ALLOWED_ORIGINS`,
 `REELIO_RENDER_BUCKET`, `CLOUD_TASKS_QUEUE`, `CLOUD_TASKS_LOCATION`,
-`INTERNAL_BASE_URL` (= URL самого сервиса), `TASKS_INVOKER_SA`,
+`INTERNAL_BASE_URL`, `INTERNAL_OIDC_AUDIENCE` (см. ниже), `TASKS_INVOKER_SA`,
 `RENDER_JOB_NAME_V2=reelio-ffmpeg-worker-v2`, `RENDER_JOB_REGION`,
 `PUBLIC_BASE_URL`, `SIGNED_URL_TTL_SECONDS`, `RENDER_RESULT_TTL_DAYS`.
 Секреты (`--set-secrets`): `GEMINI_API_KEY`, `REELIO_WORKER_TOKEN`.
+
+### Cloud Tasks OIDC: одна каноническая настройка audience
+
+Внутренний endpoint `/internal/analysis/run` дёргает **только** Cloud Tasks с
+OIDC-токеном. Токен подписывается на `audience`, а `internalGuard` проверяет
+его строго (`aud === audience`, google-auth-library). Чтобы каждая задача не
+падала в `FORBIDDEN`, обе стороны используют **одно** значение:
+
+- **`INTERNAL_BASE_URL`** — стабильный **service `status.url`** (origin вида
+  `https://reelio-backend-beta-<hash>-ew.a.run.app`), **без** пути и **без**
+  хвостового `/`. Это база и для target URL задачи.
+- **`INTERNAL_OIDC_AUDIENCE`** — канонический OIDC audience; должен **совпадать
+  с `INTERNAL_BASE_URL`**. Если не задан — по умолчанию берётся
+  `INTERNAL_BASE_URL`. Тоже голый origin, без пути.
+- **Target path** (`/internal/analysis/run`) фиксирован в коде и добавляется
+  **только к URL задачи** (`INTERNAL_BASE_URL` + path). В `audience` пути нет.
+- Значение **никогда** не составляется вручную из revision/tag URL Cloud Run
+  (адрес вида `https://TAG---SERVICE-<hash>.run.app` или
+  `https://<revision>---…`). Такой URL указывает на тег/ревизию, а не на
+  стабильный сервис. Конфигурация в cloud mode **строго валидируется** и
+  сервис **не стартует**, если `INTERNAL_BASE_URL`/`INTERNAL_OIDC_AUDIENCE`:
+  не `https`, содержат query/fragment или путь, либо это tag/canary-хост (`---`).
+
+Получить стабильный URL: `gcloud run services describe reelio-backend-beta
+--region europe-west1 --format='value(status.url)'` — и присвоить **и**
+`INTERNAL_BASE_URL`, **и** `INTERNAL_OIDC_AUDIENCE` это одно значение.
 
 Flutter (build-time, несекретные, §4C): `REELIO_BETA_BACKEND_URL`,
 `REELIO_V2_ENABLED` (по умолчанию `false`). Ключ Gemini во Flutter/GitHub-сборку

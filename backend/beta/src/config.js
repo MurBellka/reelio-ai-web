@@ -10,6 +10,17 @@
 
 import { ANALYSIS_QUOTA } from './limits.js';
 
+/**
+ * Внутренний путь, который дёргает Cloud Tasks. ФИКСИРОВАН и не берётся из env:
+ * так target URL задачи и Express-маршрут не могут разъехаться (§4A.7).
+ */
+export const INTERNAL_TASK_PATH = '/internal/analysis/run';
+
+/** Канонический вид origin/audience — без завершающего «/» и лишних пробелов. */
+function stripTrailingSlash(value) {
+  return String(value ?? '').trim().replace(/\/+$/, '');
+}
+
 function int(env, name, fallback) {
   const value = Number.parseInt(env[name] ?? '', 10);
   return Number.isFinite(value) && value > 0 ? value : fallback;
@@ -98,8 +109,20 @@ export function loadConfig(env = process.env) {
     tasks: {
       queue: env.CLOUD_TASKS_QUEUE || '',
       location: env.CLOUD_TASKS_LOCATION || env.RENDER_JOB_REGION || 'europe-west1',
-      /** Абсолютный URL внутреннего endpoint'а, который дёргает Cloud Tasks. */
-      internalUrl: env.INTERNAL_BASE_URL || '',
+      /**
+       * Стабильный service origin (без хвостового «/»). Путь к внутреннему
+       * endpoint'у добавляется ТОЛЬКО к URL задачи, здесь его нет.
+       */
+      internalUrl: stripTrailingSlash(env.INTERNAL_BASE_URL || ''),
+      /** Фиксированный внутренний путь — общий для target URL задачи и маршрута. */
+      internalPath: INTERNAL_TASK_PATH,
+      /**
+       * Канонический OIDC audience: `INTERNAL_OIDC_AUDIENCE`, а по умолчанию —
+       * `INTERNAL_BASE_URL`. Всегда голый origin без пути и без хвостового «/».
+       * Cloud Tasks подписывает токен ровно на него, internalGuard проверяет
+       * ровно его — одно значение на обе стороны (устранение дефекта audience).
+       */
+      oidcAudience: stripTrailingSlash(env.INTERNAL_OIDC_AUDIENCE || env.INTERNAL_BASE_URL || ''),
       /** SA, от имени которого Cloud Tasks подписывает OIDC-токен. */
       invokerServiceAccount: env.TASKS_INVOKER_SA || '',
     },
@@ -120,6 +143,72 @@ export function loadConfig(env = process.env) {
       maxActivePerUser: int(env, 'MAX_ACTIVE_RENDERS_PER_USER', 1),
     },
   };
+}
+
+function refuseTasksConfig(reason) {
+  throw new Error(`REFUSING TO START (cloud tasks/OIDC): ${reason}`);
+}
+
+function requireTasksField(value, name) {
+  if (!value) refuseTasksConfig(`${name} обязателен в cloud mode.`);
+}
+
+/**
+ * Origin для target/audience обязан быть чистым: https, без query/fragment, без
+ * пути и без хвостового «/» (нормализация уже сняла хвост). Отдельно ловим
+ * tag/canary URL Cloud Run (hostname вида `TAG---SERVICE-hash.run.app`): он
+ * указывает на ревизию/тег, а не на стабильный сервис, и брать его нельзя —
+ * иначе задачи ушли бы на неверный audience/адрес.
+ */
+function assertCanonicalOrigin(value, name) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return refuseTasksConfig(`${name} не является абсолютным URL: «${value}».`);
+  }
+  if (url.protocol !== 'https:') {
+    refuseTasksConfig(`${name} требует https, получено «${url.protocol}» в «${value}».`);
+  }
+  if (url.search || url.hash) {
+    refuseTasksConfig(`${name} не должен содержать query/fragment: «${value}».`);
+  }
+  if (url.pathname && url.pathname !== '/') {
+    refuseTasksConfig(
+      `${name} должен быть чистым origin без пути: «${value}». ` +
+        'Путь добавляется только к URL задачи.',
+    );
+  }
+  if (url.hostname.includes('---')) {
+    refuseTasksConfig(
+      `${name} похож на tag/canary URL Cloud Run («${url.hostname}»). ` +
+        'Используйте стабильный service URL (status.url), а не адрес ревизии/тега.',
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Строгая валидация конфигурации Cloud Tasks/OIDC. В cloud mode при
+ * несовместимой конфигурации сервис НЕ должен стартовать (§4A.7). Локально
+ * (InlineTaskQueue, без OIDC) проверка не нужна и пропускается.
+ */
+export function assertTasksConfigForMode(config) {
+  if (config.mode !== 'cloud') return;
+  const t = config.tasks ?? {};
+
+  requireTasksField(t.queue, 'CLOUD_TASKS_QUEUE');
+  requireTasksField(t.invokerServiceAccount, 'TASKS_INVOKER_SA');
+  requireTasksField(t.internalUrl, 'INTERNAL_BASE_URL');
+  requireTasksField(t.oidcAudience, 'INTERNAL_OIDC_AUDIENCE/INTERNAL_BASE_URL');
+
+  assertCanonicalOrigin(t.internalUrl, 'INTERNAL_BASE_URL');
+  assertCanonicalOrigin(t.oidcAudience, 'INTERNAL_OIDC_AUDIENCE');
+
+  // Путь фиксирован в коде: если его подменили — конфигурация несовместима.
+  if (t.internalPath !== INTERNAL_TASK_PATH) {
+    refuseTasksConfig(`внутренний путь должен быть «${INTERNAL_TASK_PATH}», получено «${t.internalPath}».`);
+  }
 }
 
 /** Снимок для /health — без секретов и без адресов. */

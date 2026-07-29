@@ -12,6 +12,8 @@
 //     переживает перезапуск инстанса — это и есть замена fire-and-forget,
 //     а НЕ `min-instances=1` (§4A.8).
 
+import { INTERNAL_TASK_PATH } from './config.js';
+
 /**
  * Встроенная очередь. `handler(payload)` получает {..., attempt, maxAttempts}.
  * Повтор — только если handler бросил исключение (retryable-сбой); на последней
@@ -65,11 +67,13 @@ export class InlineTaskQueue {
 export class CloudTasksQueue {
   /**
    * @param {{queue:string, location:string, projectId:string, internalUrl:string,
-   *          invokerServiceAccount:string, path?:string}} cfg
+   *          oidcAudience:string, invokerServiceAccount:string, internalPath?:string,
+   *          client?:object}} cfg
    */
   constructor(cfg) {
     this.cfg = cfg;
-    this.client = null;
+    // Инъекция клиента в тестах: реальный Cloud Tasks SDK не тянется.
+    this.client = cfg.client ?? null;
   }
 
   async #ensureClient() {
@@ -81,13 +85,22 @@ export class CloudTasksQueue {
   }
 
   async enqueue(payload) {
-    const { queue, location, projectId, internalUrl, invokerServiceAccount } = this.cfg;
-    if (!queue || !internalUrl || !invokerServiceAccount) {
-      throw new Error('CloudTasksQueue не сконфигурирована (queue/internalUrl/SA).');
+    const { queue, location, projectId, internalUrl, oidcAudience, invokerServiceAccount } =
+      this.cfg;
+    if (!queue || !internalUrl || !oidcAudience || !invokerServiceAccount) {
+      throw new Error('CloudTasksQueue не сконфигурирована (queue/internalUrl/audience/SA).');
     }
     const client = await this.#ensureClient();
     const parent = client.queuePath(projectId, location, queue);
-    const url = `${internalUrl.replace(/\/+$/, '')}${this.cfg.path ?? '/internal/analysis/run'}`;
+
+    // Одна каноническая настройка (§4A.7):
+    //   • target URL = стабильный origin + ФИКСИРОВАННЫЙ внутренний путь;
+    //   • OIDC audience = тот же origin БЕЗ пути (config.tasks.oidcAudience).
+    // Именно расхождение «audience с путём» ↔ «guard без пути» давало FORBIDDEN
+    // на каждую задачу; теперь audience берётся из канонического значения, а не
+    // из target URL.
+    const internalPath = this.cfg.internalPath ?? INTERNAL_TASK_PATH;
+    const url = `${internalUrl.replace(/\/+$/, '')}${internalPath}`;
 
     const task = {
       httpRequest: {
@@ -96,8 +109,9 @@ export class CloudTasksQueue {
         headers: { 'Content-Type': 'application/json' },
         body: Buffer.from(JSON.stringify(payload)).toString('base64'),
         // OIDC-токен: Cloud Tasks подписывает его от имени invoker SA, а
-        // внутренний endpoint его проверяет (§4A.7).
-        oidcToken: { serviceAccountEmail: invokerServiceAccount, audience: url },
+        // внутренний endpoint его проверяет (§4A.7). Audience — канонический
+        // origin, БЕЗ пути.
+        oidcToken: { serviceAccountEmail: invokerServiceAccount, audience: oidcAudience },
       },
       // Дедупликация: одинаковый payload той же задачи не создаёт дубль.
       ...(payload.jobId ? { name: `${parent}/tasks/${payload.kind}-${payload.jobId}` } : {}),
@@ -116,6 +130,8 @@ export function createTaskQueue(config, handler) {
       location: config.tasks.location,
       projectId: config.firebase.projectId,
       internalUrl: config.tasks.internalUrl,
+      internalPath: config.tasks.internalPath,
+      oidcAudience: config.tasks.oidcAudience,
       invokerServiceAccount: config.tasks.invokerServiceAccount,
     });
   }

@@ -17,7 +17,7 @@ import {
   requireAuth,
   workerTokenGuard,
 } from './auth.js';
-import { healthSnapshot, loadConfig } from './config.js';
+import { assertTasksConfigForMode, healthSnapshot, loadConfig } from './config.js';
 import { ApiError, errorHandler } from './errors.js';
 import { createGeminiClient } from './gemini.js';
 import { RenderService, createRenderAdapters } from './render.js';
@@ -37,6 +37,9 @@ export async function createApp(overrides = {}) {
   // §4A.5: в cloud mode фабрика вернёт Firestore и откажется от MemoryStore.
   const store = overrides.store ?? (await createStore(config));
   assertStoreForMode(config, store);
+  // §4A.7: в cloud mode несовместимая конфигурация Cloud Tasks/OIDC (пустой/
+  // HTTP/tagged URL, разъехавшийся audience) не даёт сервису стартовать.
+  assertTasksConfigForMode(config);
   const quota = buildQuotaOps({ limits: config.limits, store });
 
   const verifier = overrides.verifier ?? (await createVerifier(config));
@@ -112,8 +115,10 @@ export async function createApp(overrides = {}) {
   // Не пользовательский маршрут: без валидного OIDC он закрыт. На retryable-сбой
   // отвечает 500, чтобы Cloud Tasks повторил задачу; на успехе/терминале — 200.
   app.post(
-    '/internal/analysis/run',
-    internalGuard({ verifier: oidcVerifier, audience: config.tasks.internalUrl }),
+    // Тот же фиксированный путь, что и в target URL задачи (§4A.7): маршрут и
+    // цель не могут разъехаться. Audience — канонический origin БЕЗ пути.
+    config.tasks.internalPath,
+    internalGuard({ verifier: oidcVerifier, audience: config.tasks.oidcAudience }),
     (req, res, next) => {
       const payload = req.body ?? {};
       const attempt = Number.parseInt(req.get?.('x-cloudtasks-taskretrycount') ?? '', 10);

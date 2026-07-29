@@ -141,15 +141,26 @@ export function appCheckGuard({ verifier, mode = 'off' }) {
 export async function createOidcVerifier(config) {
   if (config.tasks?.oidcVerifier) return config.tasks.oidcVerifier; // подмена в тестах
   if (config.mode !== 'cloud') return null;
-  const { OAuth2Client } = await import('google-auth-library');
-  const client = new OAuth2Client();
+
+  // Инъекция OAuth2Client в тестах: позволяет проверить фактический `audience`,
+  // переданный в verifyIdToken, не подменяя саму логику верификатора (это не
+  // фейковый «всегда успешный» verifier).
+  let client = config.tasks?.oauth2Client;
+  if (!client) {
+    const { OAuth2Client } = await import('google-auth-library');
+    client = new OAuth2Client();
+  }
   const allowedEmail = config.tasks.invokerServiceAccount;
 
   return {
     async verify(token, audience) {
+      // audience проверяется библиотекой строго (aud === audience); ослаблять
+      // проверку или принимать массив URL нельзя.
       const ticket = await client.verifyIdToken({ idToken: token, audience });
       const payload = ticket.getPayload();
-      if (allowedEmail && payload?.email !== allowedEmail) {
+      // Email invoker-SA проверяется ОТДЕЛЬНО и строго: без сконфигурированного
+      // SA или при чужом email — отказ (fail-closed).
+      if (!allowedEmail || payload?.email !== allowedEmail) {
         throw new Error('unexpected caller');
       }
       return { email: payload?.email };
