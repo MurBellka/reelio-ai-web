@@ -11,6 +11,7 @@ import '../models/project_state.dart';
 import '../models/render_request.dart';
 import '../models/upload_ticket.dart';
 import '../services/media_upload_service.dart';
+import '../services/upload_coordinator.dart';
 import 'auth_providers.dart';
 import '../services/backend_version_service.dart';
 import '../services/render_api_client.dart';
@@ -230,6 +231,15 @@ final mediaUploadServiceProvider = Provider<MediaUploadService>((ref) {
   return service;
 });
 
+/// Единая координация загрузки (§4D.3). Использует те же клиенты, что и рендер,
+/// поэтому загруженные материалы переиспользуются, а не грузятся дважды.
+final uploadCoordinatorProvider = Provider<UploadCoordinator>(
+  (ref) => UploadCoordinator(
+    api: ref.watch(renderApiClientProvider),
+    uploader: ref.watch(mediaUploadServiceProvider),
+  ),
+);
+
 final renderPollConfigProvider = Provider<RenderPollConfig>(
   (_) => const RenderPollConfig(),
 );
@@ -279,7 +289,6 @@ class RenderController extends Notifier<RenderUiState> {
 
   /// Проверка поколения API перед отправкой материалов.
   BackendVersionService get _version => ref.read(backendVersionServiceProvider);
-  MediaUploadService get _uploads => ref.read(mediaUploadServiceProvider);
   RenderPollConfig get _pollConfig => ref.read(renderPollConfigProvider);
 
   void _set(RenderUiState next) {
@@ -386,39 +395,15 @@ class RenderController extends Notifier<RenderUiState> {
     );
 
     try {
-      // Предлагаем путь с uid владельца; авторитетным станет тот, что вернёт
-      // сервер, — его и понесём дальше.
-      final proposed = [
-        for (final asset in usedAssets)
-          RenderAsset(
-            id: asset.id,
-            type: asset.type,
-            objectPath: RenderAsset.proposedSourcePath(
-              ownerUid: ownerUid,
-              projectId: project.id,
-              asset: asset,
-            ),
-            durationSeconds: asset.durationSeconds,
-            width: asset.width,
-            height: asset.height,
-          ),
-      ];
-
-      final tickets = await _api.requestUploadTickets(
-        projectId: project.id,
-        assets: proposed,
-        contentTypes: MediaUploadService.contentTypesOf(usedAssets),
-      );
-      _throwIfCancelled();
-
-      // Пути берём ИЗ ОТВЕТА сервера: клиент их не изобретает.
-      final objectPaths = {
-        for (final ticket in tickets) ticket.assetId: ticket.objectPath,
-      };
-
-      final sizes = await _uploads.uploadAll(
+      // §4D.3: единая загрузка. Уже загруженные материалы (по стабильному
+      // mediaId в манифесте проекта) переиспользуются — повторный рендер и
+      // возврат назад не грузят их снова. Загружаются только отсутствующие.
+      final coordinator = ref.read(uploadCoordinatorProvider);
+      final result = await coordinator.ensureUploaded(
         assets: usedAssets,
-        tickets: tickets,
+        manifest: project.uploadManifest,
+        ownerUid: ownerUid,
+        projectId: project.id,
         onProgress: (progress) {
           if (state.stage == RenderUiStage.uploading) {
             _set(state.copyWith(upload: progress));
@@ -426,7 +411,16 @@ class RenderController extends Notifier<RenderUiState> {
         },
         isCancelled: () => _cancelRequested,
       );
+      ref.read(projectProvider.notifier).recordUploads(result.uploaded);
       _throwIfCancelled();
+
+      final objectPaths = result.objectPaths;
+      final sizes = <String, int>{
+        for (final a in usedAssets)
+          if (project.uploadManifest.forMedia(a.id) != null)
+            a.id: project.uploadManifest.forMedia(a.id)!.sizeBytes,
+        for (final u in result.uploaded) u.mediaId: u.sizeBytes,
+      };
 
       _set(state.copyWith(stage: RenderUiStage.submitting));
 

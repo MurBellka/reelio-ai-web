@@ -2,6 +2,7 @@ import 'edit_plan.dart';
 import 'edit_request.dart';
 import 'enums.dart';
 import 'media_asset.dart';
+import 'upload_manifest.dart';
 
 /// Полное состояние проекта — сериализуется для локального хранения.
 class ProjectState {
@@ -17,6 +18,7 @@ class ProjectState {
     required this.updatedAt,
     this.plan,
     this.coverAssetId,
+    this.uploadManifest = UploadManifest.empty,
   });
 
   final String id;
@@ -30,6 +32,10 @@ class ProjectState {
   final AppStage stage;
   final String? coverAssetId;
   final DateTime updatedAt;
+
+  /// Загруженные материалы (§4D.3): analysis и render берут их отсюда, не
+  /// загружая повторно.
+  final UploadManifest uploadManifest;
 
   factory ProjectState.empty(String id) => ProjectState(
     id: id,
@@ -83,6 +89,7 @@ class ProjectState {
     Object? plan = _noValue,
     AppStage? stage,
     Object? coverAssetId = _noValue,
+    UploadManifest? uploadManifest,
   }) => ProjectState(
     id: id,
     assets: assets ?? this.assets,
@@ -96,6 +103,7 @@ class ProjectState {
     coverAssetId: coverAssetId == _noValue
         ? this.coverAssetId
         : coverAssetId as String?,
+    uploadManifest: uploadManifest ?? this.uploadManifest,
     updatedAt: DateTime.now(),
   );
 
@@ -109,6 +117,7 @@ class ProjectState {
     'stage': stage.storageValue,
     'coverAssetId': coverAssetId,
     'updatedAt': updatedAt.toIso8601String(),
+    'uploadManifest': uploadManifest.toJson(),
     'assets': assets.map((a) => a.toJson()).toList(),
     'plan': plan?.toJson(),
   };
@@ -126,6 +135,9 @@ class ProjectState {
     ),
     stage: AppStage.fromStorage(json['stage'] as String? ?? 'onboarding'),
     coverAssetId: json['coverAssetId'] as String?,
+    uploadManifest: UploadManifest.fromJson(
+      (json['uploadManifest'] as Map?)?.cast<String, dynamic>(),
+    ),
     updatedAt:
         DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? DateTime.now(),
     assets: (json['assets'] as List? ?? [])

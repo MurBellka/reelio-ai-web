@@ -11,15 +11,14 @@ import '../models/media_asset.dart';
 import '../models/project_state.dart';
 import '../models/text_overlay.dart';
 import '../models/transition.dart';
-import '../models/render_request.dart';
+import '../models/upload_manifest.dart';
 import '../services/ai_editing_service.dart';
 import '../services/analysis_api_client.dart';
 import 'auth_providers.dart';
 import '../services/beta_ai_editing_service.dart';
 import '../services/gemini_ai_editing_service.dart';
 import '../services/media_picker_service.dart';
-import '../services/media_upload_service.dart';
-import '../services/render_api_client.dart';
+import 'render_providers.dart';
 import '../services/storage_service.dart';
 import '../services/video_export_service.dart';
 
@@ -68,49 +67,21 @@ final aiServiceProvider = Provider<AiEditingService>((ref) {
   return const MockAiEditingService();
 });
 
-/// Загрузка материалов для анализа beta: /uploads (пути от сервера) →
-/// прямая выгрузка байтов. Возвращает assetId → objectPath.
+/// Загрузка материалов для анализа beta через ЕДИНЫЙ координатор (§4D.3):
+/// уже загруженные материалы переиспользуются, новые грузятся один раз и
+/// попадают в манифест — рендер потом не грузит их повторно.
 Future<Map<String, String>> _uploadForBeta(Ref ref, EditRequest request) async {
   final uid = ref.read(currentUidProvider) ?? '';
   final project = ref.read(projectProvider);
-  final renderClient = RenderApiClient(
-    baseUrl: AppConfig.activeBackendUrl,
-    tokens: ref.read(authTokensProvider),
+  final coordinator = ref.read(uploadCoordinatorProvider);
+  final result = await coordinator.ensureUploaded(
+    assets: request.assets,
+    manifest: project.uploadManifest,
+    ownerUid: uid,
+    projectId: project.id,
   );
-  final uploader = MediaUploadService();
-  try {
-    final proposed = [
-      for (final a in request.assets)
-        RenderAsset(
-          id: a.id,
-          type: a.type,
-          objectPath: RenderAsset.proposedSourcePath(
-            ownerUid: uid,
-            projectId: project.id,
-            asset: a,
-          ),
-          durationSeconds: a.durationSeconds,
-          width: a.width,
-          height: a.height,
-        ),
-    ];
-    final tickets = await renderClient.requestUploadTickets(
-      projectId: project.id,
-      assets: proposed,
-      contentTypes: MediaUploadService.contentTypesOf(request.assets),
-    );
-    final objectPaths = {for (final t in tickets) t.assetId: t.objectPath};
-    await uploader.uploadAll(
-      assets: request.assets,
-      tickets: tickets,
-      onProgress: (_) {},
-      isCancelled: () => false,
-    );
-    return objectPaths;
-  } finally {
-    renderClient.close();
-    uploader.close();
-  }
+  ref.read(projectProvider.notifier).recordUploads(result.uploaded);
+  return result.objectPaths;
 }
 
 /// Флаг v2 поднят, но адрес беты не задан: планирование недоступно, объясняем
@@ -186,8 +157,26 @@ class ProjectController extends Notifier<ProjectState> {
   }
 
   void removeAsset(String id) {
+    final assets = state.assets.where((a) => a.id != id).toList();
+    // Удалённый материал выпадает и из манифеста загрузки.
     _emit(
-      state.copyWith(assets: state.assets.where((a) => a.id != id).toList()),
+      state.copyWith(
+        assets: assets,
+        uploadManifest: state.uploadManifest.retainOnly({
+          for (final a in assets) a.id,
+        }),
+      ),
+    );
+  }
+
+  /// §4D.3: фиксирует вновь загруженные материалы в манифесте, чтобы analysis
+  /// и render не грузили их повторно (переживает «Назад» и перезагрузку).
+  void recordUploads(List<UploadedAsset> uploaded) {
+    if (uploaded.isEmpty) return;
+    _emit(
+      state.copyWith(
+        uploadManifest: state.uploadManifest.withUploaded(uploaded),
+      ),
     );
   }
 
