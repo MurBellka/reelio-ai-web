@@ -1,10 +1,13 @@
 # Развёртывание beta v2 (contract v2)
 
-> **Статус: реализована и протестирована итерация 4A** (deployable beta
-> backend + долговечное выполнение). Итерации 4B (полный render API),
-> 4C (подключение Flutter) и 4D (облачный/emulator e2e) — **в работе**, см.
-> раздел «Осталось». Production v1 (`reelio-backend`, `reelio-ffmpeg-worker`)
-> этим документом НЕ затрагивается.
+> **Статус: реализованы и протестированы итерации 4A, 4B, 4C** (deployable
+> beta backend + долговечное выполнение + полный render API v2 + подключение
+> Flutter через feature flag), а также локальная/CI-часть 4D (fakes, emulator
+> -gated тесты, контейнерные проверки). **Настоящий облачный e2e** (реальные
+> Cloud Tasks, Cloud Run Jobs, Firestore, IAM) — ОТДЕЛЬНЫЙ этап после нового
+> независимого review и разрешения владельца; здесь облачные ресурсы не
+> создаются и не изменяются. Production v1 (`reelio-backend`,
+> `reelio-ffmpeg-worker`) НЕ затрагивается.
 
 Проект `gemini-503615` · регион `europe-west1`.
 
@@ -104,20 +107,35 @@ Flutter (build-time, несекретные, §4C): `REELIO_BETA_BACKEND_URL`,
 - Flutter/Pages: cutover идёт последним; откат = revert merge / предыдущий
   `main`-коммит, восстановить repo variable.
 
-## Осталось (не реализовано в 4A)
+## Сделано (4A–4C) и проверено тестами
 
 - **4B** — маршруты `/uploads`, `/render`, `/jobs/{id}`, `/jobs/{id}/cancel`,
-  `/download`: signed uploads, проверка ownership/содержимого, Firestore-статус
-  render jobs, запуск ТОЛЬКО `reelio-ffmpeg-worker-v2` через Cloud Run Jobs API,
-  аутентифицированный callback прогресса, короткоживущая ссылка на результат,
-  cancel/retry/expiresAt/cleanup. EditPlan v2 никогда не уходит в worker v1.
-- **4C** — Flutter: `REELIO_BETA_BACKEND_URL` + `REELIO_V2_ENABLED`,
-  AnalysisApiClient и Riverpod-провайдеры, свежие Auth+App Check токены на
-  запрос, подключение экранов 3A–3C к реальным `/analysis`/`/catalog`/`/usage`
-  и render API, блокировка загрузки без beta URL, `deploy.yml` только с
-  несекретными repo variables.
-- **4D** — облачные/emulator e2e: Firestore emulator, реальный запуск
-  worker-v2, локальный e2e upload→analysis→plan→worker-v2→MP4→download.
+  `/download` + внутренний `/internal/render/progress`. Signed uploads по
+  серверным путям, проверка ownership, Firestore-статус render jobs, запуск
+  ТОЛЬКО `reelio-ffmpeg-worker-v2`, аутентифицированный callback прогресса,
+  короткоживущая ссылка, отмена/expiresAt/410. EditPlan v2 в worker v1 не
+  уходит. (beta unit-тесты на фейках адаптеров.)
+- **4C** — Flutter: `REELIO_BETA_BACKEND_URL` + `REELIO_V2_ENABLED` (по
+  умолчанию false), `AnalysisApiClient` и `BetaAiEditingService`, свежие
+  Auth+App Check токены на запрос, маршрутизация всех клиентов на активный
+  адрес (без смешивания), блокировка загрузки без beta URL, `deploy.yml`
+  только с несекретными repo variables. Веб-сборка проходит и в v1, и в v2.
+
+## Осталось — отдельный этап после review и разрешения владельца
+
+- **Настоящий облачный/сквозной e2e**: поднять Firestore emulator и прогнать
+  `test/e2e/firestore-store.test.js`; собрать образы `reelio-backend-beta` и
+  `reelio-ffmpeg-worker-v2`; сквозной прогон
+  upload→analysis→EditPlan v2→worker-v2→MP4→download на реальных/эмулированных
+  ресурсах. Пиксельные проверки MP4 (переход, русский TextOverlay,
+  оригинальный звук; отсутствие аудиопотока при `keepOriginal=false`) уже
+  живут в наборе worker-v2 и контейнерных проверках v2-verify.
+- **Координация двойной загрузки**: сейчас beta-планировщик грузит материалы
+  для анализа, а рендер грузит их снова (перезапись в бакете безвредна) —
+  оптимизация: переиспользовать objectPaths анализа в рендере.
+- **Глубокая пересборка экранов processing→preview→export** под порядок
+  v2 (upload раньше планирования) вместо текущего сведения загрузки внутрь
+  `createEditPlan`.
 
 См. также [[reelio-reels-editor-v2]], `docs/render-contract-v2.md`,
 `docs/deploy-render.md` (v1).
