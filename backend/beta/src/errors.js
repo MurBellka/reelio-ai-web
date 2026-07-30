@@ -39,6 +39,9 @@ export const ERROR_CATALOG = {
   // Не удалось поставить анализ в долговечную очередь (Cloud Tasks). Повтор
   // осмыслен — сбой почти всегда транзиентный (инфраструктура очереди).
   ANALYSIS_ENQUEUE_FAILED: { status: 503, retryable: true },
+  // Задача слишком долго провисела в `queued` и не стартовала (потерянная/
+  // недоставленная Cloud Task). Watchdog переводит её в failed; повтор осмыслен.
+  ANALYSIS_QUEUE_TIMEOUT: { status: 503, retryable: true },
   INTERNAL: { status: 500, retryable: true },
   MODEL_OUTPUT_REJECTED: { status: 502, retryable: true },
   UPSTREAM_FAILED: { status: 502, retryable: true },

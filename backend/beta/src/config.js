@@ -16,6 +16,19 @@ import { ANALYSIS_QUOTA } from './limits.js';
  */
 export const INTERNAL_TASK_PATH = '/internal/analysis/run';
 
+/**
+ * Внутренний путь watchdog'а очереди (§4A.9): его дёргает отложенная Cloud Task,
+ * чтобы добить зависшую в `queued` попытку. Тоже ФИКСИРОВАН и не из env.
+ */
+export const INTERNAL_REAP_PATH = '/internal/analysis/reap';
+
+/**
+ * Сколько задача может провисеть в `queued`, прежде чем watchdog признает её
+ * потерянной и переведёт в `failed` (§4A.9). По умолчанию 10 минут — заведомо
+ * больше обычной задержки доставки Cloud Task, но конечно.
+ */
+export const DEFAULT_QUEUE_TIMEOUT_MS = 600_000;
+
 /** Канонический вид origin/audience — без завершающего «/» и лишних пробелов. */
 function stripTrailingSlash(value) {
   return String(value ?? '').trim().replace(/\/+$/, '');
@@ -116,6 +129,10 @@ export function loadConfig(env = process.env) {
       internalUrl: stripTrailingSlash(env.INTERNAL_BASE_URL || ''),
       /** Фиксированный внутренний путь — общий для target URL задачи и маршрута. */
       internalPath: INTERNAL_TASK_PATH,
+      /** Фиксированный путь watchdog'а очереди — target URL отложенной reap-задачи. */
+      reapPath: INTERNAL_REAP_PATH,
+      /** Потолок ожидания в `queued` до вмешательства watchdog'а (§4A.9). */
+      queueTimeoutMs: int(env, 'ANALYSIS_QUEUE_TIMEOUT_MS', DEFAULT_QUEUE_TIMEOUT_MS),
       /**
        * Канонический OIDC audience: `INTERNAL_OIDC_AUDIENCE`, а по умолчанию —
        * `INTERNAL_BASE_URL`. Всегда голый origin без пути и без хвостового «/».

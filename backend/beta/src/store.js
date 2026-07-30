@@ -134,6 +134,16 @@ export class MemoryStore {
     return active;
   }
 
+  /**
+   * Незавершённые задачи пользователя (нетранзакционно) — для защитной проверки
+   * просроченных `queued` перед резервированием слота (§4A.9).
+   */
+  listActiveJobs(uid) {
+    return [...this.jobs.values()].filter(
+      (job) => job.uid === uid && !TERMINAL_STATUSES.has(job.status),
+    );
+  }
+
   // ── Задачи рендера (§4B.3) ────────────────────────────────────────────────
 
   getRenderJob(jobId) {

@@ -15,6 +15,7 @@
 //   переименованием, ни чужим идентификатором его не обмануть.
 
 import { CostBudget, LimitExceededError, assertProjectWithinLimits } from './limits.js';
+import { DEFAULT_QUEUE_TIMEOUT_MS } from './config.js';
 import { ApiError, toApiError } from './errors.js';
 import { GEMINI_ANALYSIS_SCHEMA, GEMINI_SPEECH_SCHEMA, validateMediaAnalysis } from './analysis-schema.js';
 import { buildAnalysisPrompt, buildSpeechPrompt } from './prompts.js';
@@ -66,7 +67,9 @@ export function toPublicJob(job) {
 export class AnalysisService {
   /**
    * @param {{store: object, quota: object, limits: object, gemini: object|null,
-   *          media: object, logger?: object, now?: () => Date}} deps
+   *          media: object, logger?: object, now?: () => Date,
+   *          taskQueue?: object, watchdogQueue?: object|null,
+   *          queueTimeoutMs?: number}} deps
    */
   constructor(deps) {
     this.store = deps.store;
@@ -79,6 +82,13 @@ export class AnalysisService {
     this.now = deps.now ?? (() => new Date());
     /** jobId → AbortController, для кооперативной отмены в этом инстансе. */
     this.running = new Map();
+
+    // §4A.9: watchdog зависших `queued`. В облаке — отложенная Cloud Task на
+    // reap-endpoint; локально/в тестах отсутствует (null), защиту даёт проверка
+    // просроченных queued при обращении к задаче и резервировании слота.
+    this.watchdogQueue = deps.watchdogQueue ?? null;
+    /** Потолок ожидания в `queued`, после которого попытка признаётся потерянной. */
+    this.queueTimeoutMs = deps.queueTimeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS;
 
     // Долговечное выполнение (§4A.7): вместо fire-and-forget задача ставится в
     // очередь. В облаке это Cloud Tasks (переживает перезапуск инстанса); по
@@ -130,10 +140,17 @@ export class AnalysisService {
     );
     const fingerprint = requestFingerprint({ uid, projectId, idempotencyKey, contentHash });
 
+    // §4A.9: перед резервированием слота добиваем ПРОСРОЧЕННЫЕ `queued` попытки
+    // этого пользователя — потерянная задача не должна вечно занимать слот и
+    // блокировать новый анализ. Проверка идемпотентна и безопасна к гонкам.
+    await this.#reapStaleForUser(uid);
+
     const created = await this.store.runTransaction(async (tx) => {
       const existing = await tx.findJobByFingerprint(fingerprint);
       if (existing) {
         // §4: тот же запрос — та же задача. Ни Gemini, ни квота не трогаются.
+        // Повтор того же Idempotency-Key НЕ создаёт вторую попытку и не списывает
+        // квоту повторно (§4A.9): enqueue ниже выполняется только для isNew.
         if (existing.uid !== uid) {
           throw new ApiError('FORBIDDEN', 'Анализ недоступен.');
         }
@@ -158,6 +175,10 @@ export class AnalysisService {
         createdAt: now,
         updatedAt: now,
         finishedAt: null,
+        // §4A.9: номер попытки постановки в очередь (первая = 1) и момент
+        // постановки — оба долговечны в Firestore; на них опирается watchdog.
+        enqueueSeq: 1,
+        queuedAt: now,
         assetsTotal: assets.length,
         assetsAnalyzed: 0,
         creditsSpent: 0,
@@ -172,43 +193,70 @@ export class AnalysisService {
     if (created.isNew) {
       // §4A.7: не fire-and-forget, а долговечная очередь. HTTP-ответ уходит
       // сразу; обработчик запускается очередью и переживает перезапуск инстанса.
-      try {
-        await this.taskQueue.enqueue({
-          kind: 'analysis.run',
-          jobId: created.job.id,
-          uid,
-          projectId,
-          assets,
-        });
-      } catch (err) {
-        // enqueue сорвался: задача НИКОГДА не выполнится. Нельзя оставлять её в
-        // `queued` — иначе она навсегда занимает active slot и висит у клиента.
-        const failed = await this.#failEnqueue(created.job.id, err);
-        return { job: failed ?? created.job, isNew: true };
-      }
+      const dispatched = await this.#dispatch({ job: created.job, uid, projectId, assets });
+      return { job: dispatched.job, isNew: true };
     }
 
     return { job: created.job, isNew: created.isNew };
   }
 
   /**
-   * Обработка сорвавшегося enqueue (§4A.7). Задача не будет выполнена, поэтому
-   * переводим её в терминальное `failed` — это освобождает active slot
+   * Ставит задачу в очередь и планирует watchdog для КОНКРЕТНОЙ попытки
+   * (enqueueSeq). Сбой enqueue → терминальный failed этой же попытки. Возвращает
+   * актуальную задачу (failed при сбое). Общий путь для create и retry.
+   */
+  async #dispatch({ job, uid, projectId, assets }) {
+    const enqueueSeq = job.enqueueSeq ?? 1;
+    try {
+      await this.taskQueue.enqueue({
+        kind: 'analysis.run',
+        jobId: job.id,
+        uid,
+        projectId,
+        assets,
+        enqueueSeq,
+      });
+    } catch (err) {
+      // enqueue сорвался: задача НИКОГДА не выполнится. Нельзя оставлять её в
+      // `queued` — иначе она навсегда занимает active slot и висит у клиента.
+      const failed = await this.#failEnqueue(job.id, enqueueSeq, err);
+      return { job: failed ?? job, isNew: true };
+    }
+    // §4A.9: страховка от потерянной/недоставленной задачи — отложенный reap.
+    // Best-effort: сбой планирования watchdog'а не должен ломать анализ (его
+    // подстрахует защитная проверка просроченных queued при обращении к задаче).
+    await this.#scheduleWatchdog({ jobId: job.id, uid, projectId, enqueueSeq });
+    return { job, isNew: true };
+  }
+
+  /**
+   * Обработка сорвавшегося enqueue (§4A.7/§4A.9). Задача не будет выполнена,
+   * поэтому переводим её в терминальное `failed` — это освобождает active slot
    * (countActiveJobs не считает терминальные) — и возвращаем списанную квоту
    * РОВНО ОДИН РАЗ (guard по терминальному статусу, как в cancelAnalysis).
-   * Наружу уходит безопасный retryable-код: сбой очереди почти всегда
-   * транзиентный, клиент может повторить. ALREADY_EXISTS сюда не попадает —
-   * очередь трактует его как идемпотентный успех.
+   *
+   * Критично для конкуренции (§4A.9): меняем задачу ТОЛЬКО если это всё ещё та
+   * же попытка (`enqueueSeq` совпадает). Иначе параллельный retry уже поднял
+   * НОВУЮ попытку, и старый callback ошибки enqueue не должен её обрушить.
+   * Наружу — безопасный retryable-код: сбой очереди почти всегда транзиентный.
+   * ALREADY_EXISTS сюда не попадает — очередь трактует его как идемпотентный успех.
    */
-  async #failEnqueue(jobId, err) {
+  async #failEnqueue(jobId, enqueueSeq, err) {
     const api = toApiError(err);
-    this.logger?.warn?.('analysis enqueue failed', { jobId, code: api.code, detail: api.detail });
+    this.logger?.warn?.('analysis enqueue failed', {
+      jobId,
+      enqueueSeq,
+      code: api.code,
+      detail: api.detail,
+    });
 
     return this.store.runTransaction(async (tx) => {
       const current = await tx.getJob(jobId);
       // Уже терминальна (напр. параллельная отмена) — не трогаем и не
       // возвращаем квоту повторно.
       if (!current || TERMINAL_STATUSES.has(current.status)) return current;
+      // Другая попытка уже в работе — старый callback ничего не делает.
+      if ((current.enqueueSeq ?? 1) !== enqueueSeq) return current;
 
       // Возврат квоты одной операцией: reads-before-writes для Firestore.
       if (current.creditsSpent > 0) {
@@ -239,6 +287,99 @@ export class AnalysisService {
     });
   }
 
+  /** Просрочена ли `queued`-попытка: провисела дольше потолка ожидания (§4A.9). */
+  #isQueueExpired(job) {
+    const startedMs = Date.parse(job?.queuedAt ?? job?.createdAt ?? '');
+    if (!Number.isFinite(startedMs)) return false;
+    return this.now().getTime() - startedMs >= this.queueTimeoutMs;
+  }
+
+  /**
+   * Watchdog очереди (§4A.9). Переводит ВСЁ ЕЩЁ `queued` попытку в терминальный
+   * `failed` по таймауту ожидания: задача потеряна/не доставлена. Идемпотентно и
+   * безопасно к гонкам — действует только если:
+   *   • задача всё ещё `queued` (не стартовала, не отменена, не завершена);
+   *   • это ТА ЖЕ попытка (`enqueueSeq` совпадает) — watchdog старой попытки
+   *     после retry ничего не делает;
+   *   • время ожидания действительно вышло (защита от раннего срабатывания).
+   * Освобождает слот и возвращает кредит РОВНО ОДИН РАЗ. Публичный: его дёргает
+   * reap-endpoint (отложенная Cloud Task) и защитная проверка при обращении.
+   */
+  async reapQueued(jobId, enqueueSeq) {
+    return this.store.runTransaction(async (tx) => {
+      const current = await tx.getJob(jobId);
+      if (!current) return null;
+      // Не queued → уже стартовала/терминальна: watchdog — no-op.
+      if (current.status !== 'queued') return current;
+      // Другая попытка уже в очереди → старый watchdog ничего не делает.
+      if ((current.enqueueSeq ?? 1) !== enqueueSeq) return current;
+      // Ещё не просрочена (раннее срабатывание) — не трогаем.
+      if (!this.#isQueueExpired(current)) return current;
+
+      if (current.creditsSpent > 0) {
+        await this.quota.refund(tx, {
+          uid: current.uid,
+          projectId: current.projectId,
+          now: this.now(),
+          count: current.creditsSpent,
+        });
+      }
+
+      const now = this.now().toISOString();
+      this.logger?.warn?.('analysis queue timeout', { jobId, enqueueSeq });
+      return tx.putJob({
+        ...current,
+        status: 'failed',
+        phase: 'failed',
+        progress: 0,
+        message: 'Анализ не стартовал вовремя',
+        error: {
+          code: 'ANALYSIS_QUEUE_TIMEOUT',
+          message: 'Анализ не удалось запустить. Повторите попытку.',
+          retryable: true,
+        },
+        creditsSpent: 0,
+        updatedAt: now,
+        finishedAt: now,
+      });
+    });
+  }
+
+  /**
+   * Планирует отложенный watchdog (§4A.9) для конкретной попытки. В облаке —
+   * Cloud Task на reap-endpoint через `notBeforeMs`. Best-effort: сбой не
+   * пробрасывается (защитную роль дублирует проверка просроченных queued).
+   */
+  async #scheduleWatchdog({ jobId, uid, projectId, enqueueSeq }) {
+    if (!this.watchdogQueue) return;
+    try {
+      await this.watchdogQueue.enqueue({
+        kind: 'analysis.reap',
+        jobId,
+        uid,
+        projectId,
+        enqueueSeq,
+        notBeforeMs: this.queueTimeoutMs,
+      });
+    } catch (err) {
+      this.logger?.warn?.('watchdog schedule failed', {
+        jobId,
+        enqueueSeq,
+        detail: toApiError(err).detail,
+      });
+    }
+  }
+
+  /** Защитная проверка (§4A.9): добить просроченные `queued` попытки пользователя. */
+  async #reapStaleForUser(uid) {
+    const active = (await this.store.listActiveJobs?.(uid)) ?? [];
+    for (const job of active) {
+      if (job.status === 'queued' && this.#isQueueExpired(job)) {
+        await this.reapQueued(job.id, job.enqueueSeq ?? 1);
+      }
+    }
+  }
+
   /** Статус задачи с проверкой владения (§3). */
   async getAnalysis(uid, analysisId) {
     const job = await this.store.getJob(analysisId);
@@ -246,6 +387,13 @@ export class AnalysisService {
     // можно перебором узнавать, какие идентификаторы существуют.
     if (!job || job.uid !== uid) {
       throw new ApiError('ANALYSIS_NOT_FOUND', 'Анализ не найден.');
+    }
+    // §4A.9: защитная проверка при обращении к задаче — просроченная `queued`
+    // попытка добивается прямо здесь, чтобы клиент увидел терминальный статус, а
+    // слот освободился, даже если отложенный watchdog не сработал.
+    if (job.status === 'queued' && this.#isQueueExpired(job)) {
+      const reaped = await this.reapQueued(analysisId, job.enqueueSeq ?? 1);
+      if (reaped) return reaped;
     }
     return job;
   }
@@ -298,42 +446,54 @@ export class AnalysisService {
    * кэша: платим только за то, что действительно осталось сделать.
    */
   async retryAnalysis(uid, analysisId, assets) {
+    // Ownership/существование (getAnalysis попутно добьёт просроченную queued).
     const job = await this.getAnalysis(uid, analysisId);
     if (job.status === 'succeeded') return { job, isNew: false };
-    if (job.status === 'running' || job.status === 'queued') {
-      throw new ApiError('ANALYSIS_ALREADY_TERMINAL', 'Анализ ещё выполняется.');
-    }
 
-    const now = this.now().toISOString();
-    const revived = await this.store.runTransaction(async (tx) =>
-      tx.putJob({
-        ...(await tx.getJob(analysisId)),
+    // §4A.9: возрождение и инкремент попытки — АТОМАРНО в одной транзакции.
+    //   • увеличиваем enqueueSeq → следующая задача получит НОВОЕ имя и не
+    //     столкнётся с дедуп-tombstone завершённой попытки;
+    //   • только из терминального failed/cancelled: два конкурентных retry
+    //     сериализуются, второй увидит уже `queued` и будет отклонён — двух
+    //     оплаченных попыток не возникает.
+    const revived = await this.store.runTransaction(async (tx) => {
+      const current = await tx.getJob(analysisId);
+      if (!current || current.uid !== uid) {
+        throw new ApiError('ANALYSIS_NOT_FOUND', 'Анализ не найден.');
+      }
+      if (current.status === 'succeeded') return { job: current, alreadyDone: true };
+      if (!TERMINAL_STATUSES.has(current.status)) {
+        // queued/running (в т.ч. из-за конкурентного retry) — уже выполняется.
+        throw new ApiError('ANALYSIS_ALREADY_TERMINAL', 'Анализ ещё выполняется.');
+      }
+
+      const now = this.now().toISOString();
+      const enqueueSeq = (current.enqueueSeq ?? 1) + 1;
+      const next = await tx.putJob({
+        ...current,
         status: 'queued',
         phase: 'queued',
         progress: 0,
         message: 'Повтор анализа',
         error: null,
         warnings: [],
+        enqueueSeq,
+        queuedAt: now,
         updatedAt: now,
         finishedAt: null,
-      }),
-    );
-
-    try {
-      await this.taskQueue.enqueue({
-        kind: 'analysis.run',
-        jobId: analysisId,
-        uid,
-        projectId: job.projectId,
-        assets,
       });
-    } catch (err) {
-      // Тот же инвариант, что и при создании: сорвавшийся re-enqueue не должен
-      // оставить задачу в `queued`.
-      const failed = await this.#failEnqueue(analysisId, err);
-      return { job: failed ?? revived, isNew: true };
-    }
-    return { job: revived, isNew: true };
+      return { job: next, alreadyDone: false };
+    });
+
+    if (revived.alreadyDone) return { job: revived.job, isNew: false };
+
+    const dispatched = await this.#dispatch({
+      job: revived.job,
+      uid,
+      projectId: job.projectId,
+      assets,
+    });
+    return { job: dispatched.job, isNew: true };
   }
 
   /** Обновление прогресса — безопасное: наружу не уходит ничего лишнего (§6). */

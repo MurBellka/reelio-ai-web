@@ -142,6 +142,19 @@ export class FirestoreStore {
     return this.#get(COL.jobs, jobId);
   }
 
+  /**
+   * Незавершённые задачи пользователя (нетранзакционно, §4A.9). Тот же
+   * композитный индекс (uid, terminal), что и у countActiveJobs.
+   */
+  async listActiveJobs(uid) {
+    const snap = await this.db
+      .collection(COL.jobs)
+      .where('uid', '==', uid)
+      .where('terminal', '==', false)
+      .get();
+    return snap.docs.map((d) => d.data());
+  }
+
   async getRenderJob(jobId) {
     return this.#get(COL.renderJobs, jobId);
   }

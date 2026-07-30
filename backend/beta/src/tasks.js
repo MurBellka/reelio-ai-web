@@ -16,6 +16,9 @@ import { createHash } from 'node:crypto';
 
 import { INTERNAL_TASK_PATH } from './config.js';
 
+/** Максимальная задержка Cloud Task (scheduleTime): 30 суток. Мы просим меньше. */
+const MAX_SCHEDULE_DELAY_MS = 30 * 24 * 60 * 60 * 1000;
+
 // ── Идентификатор задачи Cloud Tasks ────────────────────────────────────────
 //
 // Cloud Tasks разрешает в ID задачи ТОЛЬКО символы `[A-Za-z0-9_-]`, длиной до
@@ -28,10 +31,16 @@ import { INTERNAL_TASK_PATH } from './config.js';
 //   • jobId (серверный) проверяется по допустимому алфавиту и длине; если он
 //     выходит за рамки — берётся стабильный SHA-256 дайджест (base64url),
 //     детерминированный и состоящий только из разрешённых символов;
-//   • ID = `<префикс kind>-<сегмент jobId>`: разные kind дают разные префиксы,
-//     разные jobId — разные сегменты, поэтому коллизий между задачами нет;
-//   • ID детерминирован по (kind, jobId) — это и есть ключ дедупликации/
-//     идемпотентности Cloud Tasks (повторный enqueue → ALREADY_EXISTS).
+//   • номер попытки enqueueSeq входит в ID суффиксом `-a<seq>`: РАЗНАЯ попытка
+//     той же задачи даёт РАЗНОЕ имя (§4A.9). Это критично: Cloud Tasks держит
+//     имя завершённой задачи в дедуп-окне ~1 час, поэтому retry с тем же именем
+//     получал бы ALREADY_EXISTS и НЕ запускался — задача зависала в `queued`.
+//     Инкремент enqueueSeq даёт новое имя → новая задача реально ставится;
+//   • ID = `<префикс kind>-<сегмент jobId>-a<enqueueSeq>`: разные kind → разные
+//     префиксы, разные jobId → разные сегменты, разные попытки → разный суффикс,
+//     поэтому коллизий между задачами нет;
+//   • ID детерминирован по (kind, jobId, enqueueSeq) — это ключ дедупликации/
+//     идемпотентности Cloud Tasks (повтор ТОЙ ЖЕ попытки → ALREADY_EXISTS).
 
 /** Максимальная длина ID задачи Cloud Tasks. */
 export const TASK_ID_MAX_LENGTH = 500;
@@ -41,6 +50,8 @@ const TASK_ID_ALLOWED = /^[A-Za-z0-9_-]+$/;
 /** Закрытое отображение известных типов задач → безопасный префикс ID. */
 export const TASK_KIND_PREFIXES = Object.freeze({
   'analysis.run': 'analysis-run',
+  // Отложенный watchdog очереди (§4A.9): добивает зависшую в `queued` попытку.
+  'analysis.reap': 'analysis-reap',
 });
 
 /** Неизвестный kind — дефект вызова, не пользовательская ошибка. */
@@ -69,22 +80,33 @@ function safeJobSegment(jobId, maxLength) {
   return `d_${base64url(createHash('sha256').update(id).digest())}`;
 }
 
+/** Номер попытки → безопасное целое ≥ 1. Серверное значение, но валидируем. */
+function normalizeSeq(enqueueSeq) {
+  const n = Math.floor(Number(enqueueSeq));
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`Некорректный enqueueSeq: «${enqueueSeq}» (ожидалось целое ≥ 1).`);
+  }
+  return n;
+}
+
 /**
- * ID задачи Cloud Tasks для пары (kind, jobId). Детерминирован, содержит только
- * разрешённые символы и укладывается в лимит длины. Неизвестный kind отклоняется
- * ДО обращения к API.
+ * ID задачи Cloud Tasks для (kind, jobId, enqueueSeq). Детерминирован, содержит
+ * только разрешённые символы и укладывается в лимит длины. Неизвестный kind
+ * отклоняется ДО обращения к API. Формат: `<префикс>-<сегмент>-a<enqueueSeq>`.
  *
  * @param {string} kind тип задачи из TASK_KIND_PREFIXES
  * @param {string} jobId серверный идентификатор задачи
+ * @param {number} [enqueueSeq=1] номер попытки постановки в очередь (≥ 1)
  * @returns {string} безопасный ID задачи
  */
-export function buildTaskId(kind, jobId) {
+export function buildTaskId(kind, jobId, enqueueSeq = 1) {
   const prefix = TASK_KIND_PREFIXES[kind];
   if (!prefix) throw new UnknownTaskKindError(kind);
-  // Бюджет под сегмент: вычитаем префикс и разделитель. Дайджест (~45 символов)
-  // заведомо влезает, поэтому длинный jobId безопасно сворачивается.
-  const budget = TASK_ID_MAX_LENGTH - prefix.length - 1;
-  const id = `${prefix}-${safeJobSegment(jobId, budget)}`;
+  const suffix = `-a${normalizeSeq(enqueueSeq)}`;
+  // Бюджет под сегмент: вычитаем префикс, разделитель и суффикс попытки. Дайджест
+  // (~45 символов) заведомо влезает, поэтому длинный jobId безопасно сворачивается.
+  const budget = TASK_ID_MAX_LENGTH - prefix.length - 1 - suffix.length;
+  const id = `${prefix}-${safeJobSegment(jobId, budget)}${suffix}`;
   // Инвариант: результат обязан быть валиден. Нарушение — дефект этого кода.
   if (!TASK_ID_ALLOWED.test(id) || id.length > TASK_ID_MAX_LENGTH) {
     throw new Error(`Построен недопустимый Cloud Tasks ID: «${id}».`);
@@ -103,6 +125,12 @@ export function isAlreadyExistsError(err) {
     err?.code === 'ALREADY_EXISTS' ||
     /already[\s_-]?exists/i.test(String(err?.message ?? err ?? ''))
   );
+}
+
+/** Delay (мс) → Cloud Tasks Timestamp `{seconds}` для scheduleTime. */
+function scheduleTimeFromDelay(delayMs) {
+  const clamped = Math.min(MAX_SCHEDULE_DELAY_MS, Math.max(0, Math.floor(Number(delayMs) || 0)));
+  return { seconds: Math.floor((Date.now() + clamped) / 1000) };
 }
 
 /**
@@ -183,8 +211,13 @@ export class CloudTasksQueue {
     }
 
     // ID задачи строится и валидируется ДО обращения к API: неизвестный kind
-    // или недопустимый jobId не должны доходить до Cloud Tasks (§4A.6).
-    const taskId = payload.jobId != null ? buildTaskId(payload.kind, payload.jobId) : null;
+    // или недопустимый jobId не должны доходить до Cloud Tasks (§4A.6). Номер
+    // попытки enqueueSeq входит в имя, поэтому retry (новый seq) не сталкивается
+    // с дедуп-tombstone завершённой попытки (§4A.9).
+    const taskId =
+      payload.jobId != null
+        ? buildTaskId(payload.kind, payload.jobId, payload.enqueueSeq ?? 1)
+        : null;
 
     const client = await this.#ensureClient();
     const parent = client.queuePath(projectId, location, queue);
@@ -221,6 +254,11 @@ export class CloudTasksQueue {
                 : `${parent}/tasks/${taskId}`,
           }
         : {}),
+      // Отложенный запуск (§4A.9, watchdog): задача не станет доступна раньше
+      // scheduleTime. Cloud Tasks ждёт указанный момент прежде чем дёрнуть URL.
+      ...(payload.notBeforeMs != null
+        ? { scheduleTime: scheduleTimeFromDelay(payload.notBeforeMs) }
+        : {}),
     };
 
     try {
@@ -251,4 +289,26 @@ export function createTaskQueue(config, handler) {
     });
   }
   return new InlineTaskQueue({ handler });
+}
+
+/**
+ * Фабрика watchdog-очереди (§4A.9): отложенная Cloud Task на reap-endpoint с тем
+ * же OIDC (audience — канонический origin, тот же invoker SA), но иным target
+ * path. В облаке — CloudTasksQueue с `internalPath = reapPath`; локально/в тестах
+ * watchdog не нужен (защитная проверка просроченных queued покрывает local mode),
+ * поэтому возвращаем `null`, и сервис просто не планирует reap-задачу.
+ */
+export function createWatchdogQueue(config) {
+  if (config.mode === 'cloud' && config.tasks.queue) {
+    return new CloudTasksQueue({
+      queue: config.tasks.queue,
+      location: config.tasks.location,
+      projectId: config.firebase.projectId,
+      internalUrl: config.tasks.internalUrl,
+      internalPath: config.tasks.reapPath,
+      oidcAudience: config.tasks.oidcAudience,
+      invokerServiceAccount: config.tasks.invokerServiceAccount,
+    });
+  }
+  return null;
 }

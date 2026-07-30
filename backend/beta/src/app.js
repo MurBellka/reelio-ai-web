@@ -24,7 +24,7 @@ import { RenderService, createRenderAdapters } from './render.js';
 import { createRenderRoutes, renderProgressHandler } from './render-routes.js';
 import { createAnalysisRoutes } from './routes.js';
 import { assertStoreForMode, buildQuotaOps, createStore } from './store.js';
-import { createTaskQueue } from './tasks.js';
+import { createTaskQueue, createWatchdogQueue } from './tasks.js';
 
 /** Ответ на превышение частоты — в том же конверте, что остальные ошибки. */
 function rateLimitHandler(req, res) {
@@ -49,6 +49,10 @@ export async function createApp(overrides = {}) {
   // Долговечная очередь (§4A.7). Обработчик — runJob сервиса; для CloudTasks
   // обработчик не нужен (его дёргает внутренний endpoint).
   const taskQueue = overrides.taskQueue ?? createTaskQueue(config, null);
+  // §4A.9: watchdog зависших queued — отложенная Cloud Task на reap-endpoint
+  // (в облаке); локально/в тестах null (защиту даёт проверка просроченных queued).
+  const watchdogQueue =
+    overrides.watchdogQueue !== undefined ? overrides.watchdogQueue : createWatchdogQueue(config);
 
   const service =
     overrides.service ??
@@ -60,6 +64,8 @@ export async function createApp(overrides = {}) {
       media: overrides.media,
       logger: overrides.logger,
       taskQueue,
+      watchdogQueue,
+      queueTimeoutMs: config.tasks.queueTimeoutMs,
     });
 
   if (taskQueue && typeof taskQueue.setHandler === 'function') {
@@ -133,6 +139,22 @@ export async function createApp(overrides = {}) {
         .catch((err) => next(new ApiError('ANALYSIS_FAILED', 'Задача будет повторена.', {
           detail: err?.message,
         })));
+    },
+  );
+
+  // Watchdog очереди (§4A.9): его дёргает ТОЛЬКО отложенная Cloud Task с тем же
+  // OIDC (audience — канонический origin, тот же invoker SA). Добивает всё ещё
+  // `queued` попытку по её enqueueSeq; для стартовавшей/терминальной — no-op.
+  app.post(
+    config.tasks.reapPath,
+    internalGuard({ verifier: oidcVerifier, audience: config.tasks.oidcAudience }),
+    (req, res, next) => {
+      const { jobId, enqueueSeq } = req.body ?? {};
+      Promise.resolve(service.reapQueued(jobId, enqueueSeq))
+        .then(() => res.json({ ok: true }))
+        .catch((err) =>
+          next(new ApiError('INTERNAL', 'Не удалось обработать watchdog.', { detail: err?.message })),
+        );
     },
   );
 

@@ -41,6 +41,15 @@ test('FirestoreStore: durability, идемпотентность, квоты, о
     assert.equal(await t.countActiveJobs('ue'), 1);
   });
 
+  // ── 1b. listActiveJobs (§4A.9): нетранзакционный список незавершённых ──────
+  // На нём держится защитная проверка просроченных queued перед резервированием
+  // слота — гоняем против реального эмулятора (fake-Firestore юнит-тест не умеет
+  // .get() по составному where-запросу).
+  const active = await store2.listActiveJobs('ue');
+  assert.equal(active.length, 1, 'только незавершённая задача активна');
+  assert.equal(active[0].id, 'an_e1');
+  assert.equal(active[0].enqueueSeq ?? 1, 1);
+
   // ── 2. Транзакционная идемпотентность по отпечатку запроса ────────────────
   await store2.runTransaction(async (t) => {
     assert.equal((await t.findJobByFingerprint('fpe1')).id, 'an_e1');

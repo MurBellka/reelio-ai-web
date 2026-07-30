@@ -70,9 +70,11 @@ test('CloudTasksQueue без очереди/URL/SA отказывается ст
 
 // ── §4A.6: построение ID задачи Cloud Tasks ─────────────────────────────────
 
-test('1. analysis.run даёт ID вида analysis-run-…', () => {
-  assert.equal(buildTaskId('analysis.run', 'an_01H8XY'), 'analysis-run-an_01H8XY');
-  assert.match(buildTaskId('analysis.run', 'an_01H8XY'), /^analysis-run-/);
+test('1. analysis.run даёт ID вида analysis-run-…-a<seq>', () => {
+  assert.equal(buildTaskId('analysis.run', 'an_01H8XY', 1), 'analysis-run-an_01H8XY-a1');
+  assert.equal(buildTaskId('analysis.run', 'an_01H8XY', 2), 'analysis-run-an_01H8XY-a2');
+  // enqueueSeq по умолчанию = 1 (первая попытка).
+  assert.equal(buildTaskId('analysis.run', 'an_01H8XY'), 'analysis-run-an_01H8XY-a1');
 });
 
 test('2. ID не содержит точки и других запрещённых символов', () => {
@@ -125,10 +127,37 @@ test('5. разные jobId не дают одинаковый ID; прямой 
   assert.ok(digest.startsWith('analysis-run-d_'));
 });
 
-test('6. повтор (kind, jobId) даёт тот же ID (детерминизм → идемпотентность)', () => {
-  assert.equal(buildTaskId('analysis.run', 'an_1'), buildTaskId('analysis.run', 'an_1'));
+test('6. повтор (kind, jobId, seq) даёт тот же ID (детерминизм → идемпотентность)', () => {
+  assert.equal(buildTaskId('analysis.run', 'an_1', 3), buildTaskId('analysis.run', 'an_1', 3));
   const big = 'z'.repeat(5000);
-  assert.equal(buildTaskId('analysis.run', big), buildTaskId('analysis.run', big));
+  assert.equal(buildTaskId('analysis.run', big, 2), buildTaskId('analysis.run', big, 2));
+});
+
+test('§4A.9: разный enqueueSeq → разное имя (retry не сталкивается с tombstone)', () => {
+  const a1 = buildTaskId('analysis.run', 'an_1', 1);
+  const a2 = buildTaskId('analysis.run', 'an_1', 2);
+  assert.equal(a1, 'analysis-run-an_1-a1');
+  assert.equal(a2, 'analysis-run-an_1-a2');
+  assert.notEqual(a1, a2, 'новая попытка — новое имя');
+  // Суффикс попытки не ломает алфавит и держится в пределах длины даже для
+  // свёрнутого в дайджест длинного jobId.
+  const longSeq = buildTaskId('analysis.run', 'x'.repeat(2000), 987654);
+  assert.match(longSeq, TASK_ID_ALLOWED);
+  assert.ok(longSeq.length <= TASK_ID_MAX_LENGTH);
+  assert.match(longSeq, /-a987654$/);
+});
+
+test('§4A.9: reap-задача имеет свой префикс и не сталкивается с run-задачей', () => {
+  const run = buildTaskId('analysis.run', 'an_1', 1);
+  const reap = buildTaskId('analysis.reap', 'an_1', 1);
+  assert.equal(reap, 'analysis-reap-an_1-a1');
+  assert.notEqual(run, reap);
+});
+
+test('buildTaskId отвергает некорректный enqueueSeq', () => {
+  assert.throws(() => buildTaskId('analysis.run', 'an_1', 0), /enqueueSeq/);
+  assert.throws(() => buildTaskId('analysis.run', 'an_1', -2), /enqueueSeq/);
+  assert.throws(() => buildTaskId('analysis.run', 'an_1', 'abc'), /enqueueSeq/);
 });
 
 test('isAlreadyExistsError распознаёт gRPC-код 6 и текстовую форму', () => {
@@ -182,14 +211,27 @@ test('7. payload Cloud Tasks несёт корректное полное task n
   const client = cloudTasksAdapter();
   const queue = new CloudTasksQueue({ ...cloudCfg(), client });
 
-  const res = await queue.enqueue({ jobId: 'an_01H8XY', kind: 'analysis.run', uid: 'u1' });
+  const res = await queue.enqueue({ jobId: 'an_01H8XY', kind: 'analysis.run', uid: 'u1', enqueueSeq: 1 });
 
   const expected =
-    'projects/proj-test/locations/europe-west1/queues/reelio-analysis-v2/tasks/analysis-run-an_01H8XY';
+    'projects/proj-test/locations/europe-west1/queues/reelio-analysis-v2/tasks/analysis-run-an_01H8XY-a1';
   assert.equal(res.name, expected);
   assert.equal(client.created[0].task.name, expected);
   // ID-часть проходит реальную проверку адаптера (без точки, разрешённые символы).
   assert.match(expected.split('/tasks/')[1], TASK_ID_ALLOWED);
+});
+
+test('§4A.9: notBeforeMs → scheduleTime в будущем (отложенный watchdog)', async () => {
+  const client = cloudTasksAdapter();
+  const queue = new CloudTasksQueue({ ...cloudCfg(), internalPath: '/internal/analysis/reap', client });
+
+  const before = Math.floor(Date.now() / 1000);
+  await queue.enqueue({ jobId: 'an_w', kind: 'analysis.reap', enqueueSeq: 1, notBeforeMs: 600_000 });
+
+  const { task } = client.created[0];
+  assert.ok(task.scheduleTime?.seconds >= before + 590, 'запуск отложен примерно на таймаут');
+  assert.equal(task.httpRequest.url, `${cloudCfg().internalUrl}/internal/analysis/reap`);
+  assert.match(task.name.split('/tasks/')[1], /^analysis-reap-an_w-a1$/);
 });
 
 test('адаптер отверг бы старое имя с точкой (доказательство, что проверка реальна)', async () => {
@@ -202,18 +244,37 @@ test('адаптер отверг бы старое имя с точкой (до
   );
 });
 
-test('11. ALREADY_EXISTS для той же задачи — идемпотентный успех, не 500', async () => {
+test('11. ALREADY_EXISTS для ТОЙ ЖЕ попытки — идемпотентный успех, не 500', async () => {
   const client = cloudTasksAdapter();
   const queue = new CloudTasksQueue({ ...cloudCfg(), client });
-  const payload = { jobId: 'an_dup', kind: 'analysis.run', uid: 'u1' };
+  const payload = { jobId: 'an_dup', kind: 'analysis.run', uid: 'u1', enqueueSeq: 1 };
 
   const first = await queue.enqueue(payload);
   assert.equal(first.scheduled, true);
   assert.ok(!first.alreadyExists);
 
-  // Тот же (kind, jobId) → тот же детерминированный ID → ALREADY_EXISTS.
+  // Та же (kind, jobId, enqueueSeq) → тот же ID → ALREADY_EXISTS.
   const second = await queue.enqueue(payload);
-  assert.equal(second.scheduled, true, 'повтор не бросает — считается успехом');
+  assert.equal(second.scheduled, true, 'повтор той же попытки не бросает — успех');
   assert.equal(second.alreadyExists, true);
   assert.equal(client.created.length, 1, 'вторая задача не создаётся');
+});
+
+test('§4A.9: retry (новый enqueueSeq) обходит tombstone и создаёт новую задачу', async () => {
+  const client = cloudTasksAdapter();
+  const queue = new CloudTasksQueue({ ...cloudCfg(), client });
+
+  // Попытка 1 поставлена и «дедуп-tombstone» её имени сохраняется адаптером.
+  const a1 = await queue.enqueue({ jobId: 'an_r', kind: 'analysis.run', enqueueSeq: 1 });
+  assert.ok(!a1.alreadyExists);
+
+  // Тот же seq снова → ALREADY_EXISTS (как реальный Cloud Tasks в дедуп-окне).
+  const a1again = await queue.enqueue({ jobId: 'an_r', kind: 'analysis.run', enqueueSeq: 1 });
+  assert.equal(a1again.alreadyExists, true);
+
+  // Новая попытка (seq=2) → НОВОЕ имя → задача реально создаётся, не ALREADY_EXISTS.
+  const a2 = await queue.enqueue({ jobId: 'an_r', kind: 'analysis.run', enqueueSeq: 2 });
+  assert.ok(!a2.alreadyExists, 'новая попытка не считается дублем');
+  assert.equal(client.created.length, 2, 'создано две разные задачи: a1 и a2');
+  assert.match(client.created[1].task.name, /-a2$/);
 });
