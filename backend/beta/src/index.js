@@ -10,11 +10,16 @@
 
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
+import { createLogger } from './logger.js';
 
 /** Собирает приложение и начинает слушать порт. Возвращает управление сервером. */
 export async function startServer(env = process.env) {
   const config = loadConfig(env);
-  const built = await createApp({ config });
+  // §безопасные логи: в cloud прокидываем структурированный logger, чтобы детали
+  // внутренних 5xx (безопасный код/stage/retryable) не терялись, а errorHandler
+  // не молчал. В local/test — без логгера (как было).
+  const logger = config.mode === 'cloud' ? createLogger() : null;
+  const built = await createApp({ config, logger });
   const { app } = built;
 
   const server = await new Promise((resolve) => {

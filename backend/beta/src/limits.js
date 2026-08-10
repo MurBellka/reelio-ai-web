@@ -29,6 +29,15 @@ export const ANALYSIS_LIMITS = {
   maxFrameBytes: 400 * 1024,
   /** Размер аудиофрагмента, байт. */
   maxAudioBytes: 12 * 1024 * 1024,
+  /**
+   * Жёсткий потолок размера ИСХОДНОГО материала, который сервер скачивает из
+   * бакета для локального анализа (§ cloud media adapter). Ограничивает и
+   * стоимость egress/диска, и абузивные объекты. Проверяется дважды: по
+   * metadata ДО скачивания и по факту переданных байтов ВО ВРЕМЯ скачивания
+   * (на случай неверной metadata). Отдельного лимита на размер загрузки в
+   * контракте не было — это новый предохранитель, не ослабляющий прочие лимиты.
+   */
+  maxSourceBytes: 512 * 1024 * 1024,
   /** Потолок времени на анализ одного материала. */
   perAssetTimeoutMs: 120_000,
   /** Потолок времени на анализ всего проекта. */
@@ -39,6 +48,31 @@ export const ANALYSIS_LIMITS = {
   maxGeminiRetries: 2,
   /** Максимум вызовов Gemini на проект — жёсткий предохранитель от цикла. */
   maxGeminiCallsPerProject: 60,
+};
+
+/**
+ * Допустимые Content-Type исходного материала по типу ассета. Проверяются по
+ * metadata объекта ДО скачивания; это грубый фильтр — фактический формат всё
+ * равно подтверждает ffprobe. `application/octet-stream` разрешён как частый
+ * дефолт при прямой загрузке в GCS (реальный формат проверит ffprobe).
+ */
+export const ALLOWED_CONTENT_TYPES = {
+  video: new Set([
+    'video/mp4',
+    'video/quicktime',
+    'video/x-matroska',
+    'video/webm',
+    'video/3gpp',
+    'application/octet-stream',
+  ]),
+  photo: new Set([
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/heic',
+    'image/heif',
+    'application/octet-stream',
+  ]),
 };
 
 /** §11 — денежный потолок. Считается по прайсу модели, см. estimateCostUsd. */

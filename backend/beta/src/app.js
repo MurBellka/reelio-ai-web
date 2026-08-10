@@ -20,6 +20,7 @@ import {
 import { assertTasksConfigForMode, healthSnapshot, loadConfig } from './config.js';
 import { ApiError, errorHandler } from './errors.js';
 import { createGeminiClient } from './gemini.js';
+import { assertMediaForMode, createMediaForMode } from './media.js';
 import { RenderService, createRenderAdapters } from './render.js';
 import { createRenderRoutes, renderProgressHandler } from './render-routes.js';
 import { createAnalysisRoutes } from './routes.js';
@@ -54,6 +55,15 @@ export async function createApp(overrides = {}) {
   const watchdogQueue =
     overrides.watchdogQueue !== undefined ? overrides.watchdogQueue : createWatchdogQueue(config);
 
+  // Media adapter анализа. В cloud — настоящий GCS adapter (скачивание материала
+  // + ffprobe/кадры/аудио); в local/test берётся из overrides (fakeMedia) или
+  // отсутствует. Fail-closed: cloud НЕ стартует без media (это и был баг —
+  // AnalysisService.media=undefined → падение на probing).
+  const media =
+    overrides.media ??
+    (await createMediaForMode(config, { logger: overrides.logger, storage: overrides.storage }));
+  assertMediaForMode(config, media);
+
   const service =
     overrides.service ??
     new AnalysisService({
@@ -61,7 +71,7 @@ export async function createApp(overrides = {}) {
       quota,
       limits: config.limits,
       gemini,
-      media: overrides.media,
+      media,
       logger: overrides.logger,
       taskQueue,
       watchdogQueue,

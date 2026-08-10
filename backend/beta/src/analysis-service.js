@@ -559,62 +559,87 @@ export class AnalysisService {
         const share = index / assets.length;
         await this.#progress(jobId, 'probing', share, 'Проверка материалов');
 
-        // Локальный проход: ffprobe, сцены, качество, кадры, аудио.
-        const measured = await this.media.measure(asset, { signal: controller.signal });
+        // Локальный проход: ffprobe, сцены, качество, кадры, аудио. uid/projectId
+        // передаём для ПОВТОРНОЙ проверки владения в media adapter перед чтением
+        // из GCS. Временный файл материала гарантированно освобождается в finally
+        // (media.release) — при успехе, кэш-попадании, ошибке, отмене и таймауте.
+        let measured;
+        try {
+          measured = await this.media.measure(asset, { signal: controller.signal, uid, projectId });
 
-        // §5: ключ кэша — от содержимого, посчитанного сервером.
-        const fingerprint = analysisFingerprint({
-          uid,
-          contentHash: measured.contentHash,
-          analysisVersion: 1,
-          model: this.gemini?.model ?? 'none',
-        });
+          // §5: ключ кэша — от содержимого, посчитанного сервером.
+          const fingerprint = analysisFingerprint({
+            uid,
+            contentHash: measured.contentHash,
+            analysisVersion: 1,
+            model: this.gemini?.model ?? 'none',
+          });
 
-        const cached = await this.store.getAnalysis(fingerprint);
-        if (cached) {
-          // Кэш-попадание: ни вызова модели, ни списания квоты.
-          analyses.push(cached);
-          fromCacheCount += 1;
-          await this.#progress(jobId, 'sampling', (index + 1) / assets.length, 'Материал уже разобран');
-          continue;
+          const cached = await this.store.getAnalysis(fingerprint);
+          if (cached) {
+            // Кэш-попадание: ни вызова модели, ни списания квоты.
+            analyses.push(cached);
+            fromCacheCount += 1;
+            await this.#progress(jobId, 'sampling', (index + 1) / assets.length, 'Материал уже разобран');
+            continue;
+          }
+
+          await this.#progress(jobId, 'sampling', share, 'Отбор кадров');
+          const sample = await this.media.sample(asset, measured, {
+            signal: controller.signal,
+            uid,
+            projectId,
+          });
+
+          if (!budget.canAfford({ frames: sample.frames.length, audioSeconds: sample.audioSeconds })) {
+            warnings.push(`Материал «${asset.id}» пропущен: исчерпан бюджет анализа.`);
+            continue;
+          }
+
+          // Квота списывается ровно перед платной работой и в одной транзакции.
+          await this.store.runTransaction(async (tx) => {
+            // Все чтения ДО записей (getJob, затем чтения счётчиков внутри
+            // charge) — требование транзакций Firestore.
+            const job = await tx.getJob(jobId);
+            await this.quota.charge(tx, { uid, projectId, now: this.now() });
+            await tx.putJob({ ...job, creditsSpent: (job.creditsSpent ?? 0) + 1 });
+          });
+          credits += 1;
+
+          await this.#progress(jobId, 'understanding', share, 'Анализ содержимого');
+          const analysis = await this.#analyseAsset({
+            asset,
+            measured,
+            sample,
+            budget,
+            signal: controller.signal,
+          });
+
+          await this.store.putAnalysis(fingerprint, analysis);
+          analyses.push(analysis);
+
+          await this.#progress(
+            jobId,
+            'understanding',
+            (index + 1) / assets.length,
+            'Анализ содержимого',
+          );
+        } finally {
+          // Освобождаем скачанный адаптером временный файл этого материала.
+          // release опционален (fakeMedia его не имеет) и не должен маскировать
+          // основную ошибку.
+          if (measured !== undefined && typeof this.media.release === 'function') {
+            try {
+              await this.media.release(measured);
+            } catch (cleanupErr) {
+              this.logger?.warn?.('media release failed', {
+                jobId,
+                stage: 'release',
+                code: cleanupErr?.code ?? 'unknown',
+              });
+            }
+          }
         }
-
-        await this.#progress(jobId, 'sampling', share, 'Отбор кадров');
-        const sample = await this.media.sample(asset, measured, { signal: controller.signal });
-
-        if (!budget.canAfford({ frames: sample.frames.length, audioSeconds: sample.audioSeconds })) {
-          warnings.push(`Материал «${asset.id}» пропущен: исчерпан бюджет анализа.`);
-          continue;
-        }
-
-        // Квота списывается ровно перед платной работой и в одной транзакции.
-        await this.store.runTransaction(async (tx) => {
-          // Все чтения ДО записей (getJob, затем чтения счётчиков внутри
-          // charge) — требование транзакций Firestore.
-          const job = await tx.getJob(jobId);
-          await this.quota.charge(tx, { uid, projectId, now: this.now() });
-          await tx.putJob({ ...job, creditsSpent: (job.creditsSpent ?? 0) + 1 });
-        });
-        credits += 1;
-
-        await this.#progress(jobId, 'understanding', share, 'Анализ содержимого');
-        const analysis = await this.#analyseAsset({
-          asset,
-          measured,
-          sample,
-          budget,
-          signal: controller.signal,
-        });
-
-        await this.store.putAnalysis(fingerprint, analysis);
-        analyses.push(analysis);
-
-        await this.#progress(
-          jobId,
-          'understanding',
-          (index + 1) / assets.length,
-          'Анализ содержимого',
-        );
       }
 
       if (analyses.length === 0) {

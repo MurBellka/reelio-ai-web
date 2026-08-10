@@ -12,6 +12,12 @@ export const ERROR_CATALOG = {
   PLAN_INVALID: { status: 400, retryable: false },
   ASSET_MISSING: { status: 400, retryable: false },
   INVALID_OBJECT_PATH: { status: 400, retryable: false },
+  // Cloud media adapter (§ скачивание материала из GCS для анализа).
+  ASSET_TOO_LARGE: { status: 400, retryable: false },
+  UNSUPPORTED_MEDIA_TYPE: { status: 400, retryable: false },
+  MEDIA_PROBE_FAILED: { status: 400, retryable: false },
+  // Объект подменён между проверкой metadata и чтением (generation изменился).
+  ASSET_CHANGED: { status: 409, retryable: true },
 
   UNAUTHENTICATED: { status: 401, retryable: false },
   APP_CHECK_FAILED: { status: 403, retryable: false },
@@ -46,6 +52,8 @@ export const ERROR_CATALOG = {
   MODEL_OUTPUT_REJECTED: { status: 502, retryable: true },
   UPSTREAM_FAILED: { status: 502, retryable: true },
   ANALYSIS_UNAVAILABLE: { status: 503, retryable: true },
+  // Cloud media adapter не сконфигурирован (обязателен в cloud mode, fail-closed).
+  MEDIA_NOT_CONFIGURED: { status: 503, retryable: false },
   TIMEOUT: { status: 504, retryable: true },
   CANCELLED: { status: 499, retryable: false },
 };
