@@ -24,11 +24,17 @@ class MontagePlayer extends StatefulWidget {
   const MontagePlayer({
     super.key,
     required this.plan,
-    required this.assetsByPath,
+    required this.assetsById,
+    this.assetsByPath = const {},
     this.badge,
   });
 
   final EditPlan plan;
+
+  /// Материалы по стабильному mediaId — основной способ сопоставления (§2).
+  final Map<String, MediaAsset> assetsById;
+
+  /// Резерв по локальному пути — только для старых черновиков с filePath.
   final Map<String, MediaAsset> assetsByPath;
   final Widget? badge;
 
@@ -49,6 +55,17 @@ class _MontagePlayerState extends State<MontagePlayer>
 
   List<EditClip> get _clips => widget.plan.clips;
   double get _total => widget.plan.computedDuration;
+
+  /// Материал клипа: сначала по mediaId (стабильно, §2), затем — по локальному
+  /// пути (старые черновики). Два одноимённых файла не путаются: mediaId
+  /// уникален. Отсутствие материала (напр. после reload без локального файла)
+  /// не роняет плеер — вызывающий код покажет placeholder.
+  MediaAsset? _assetFor(EditClip clip) {
+    final byId = widget.assetsById[clip.mediaId];
+    if (byId != null) return byId;
+    final path = clip.filePath;
+    return path == null ? null : widget.assetsByPath[path];
+  }
 
   @override
   void initState() {
@@ -107,7 +124,8 @@ class _MontagePlayerState extends State<MontagePlayer>
     if (_clips.isEmpty) return;
     _index = index;
     final clip = _clips[index];
-    final asset = widget.assetsByPath[clip.filePath];
+    final asset = _assetFor(clip);
+    final path = asset?.path;
 
     _clip.stop();
     _clip.duration = Duration(
@@ -115,7 +133,7 @@ class _MontagePlayerState extends State<MontagePlayer>
     );
 
     // Останавливаем предыдущее видео, если оно другое.
-    if (_current != null && _current != _videoCache[clip.filePath]) {
+    if (_current != null && _current != _videoCache[path]) {
       await _current!.pause();
     }
 
@@ -129,7 +147,7 @@ class _MontagePlayerState extends State<MontagePlayer>
 
     if (isPlayableVideo) {
       if (mounted) setState(() => _loading = true);
-      current = await _ensureVideo(clip.filePath);
+      current = await _ensureVideo(path!);
       if (current == null) {
         failed = true;
       } else {
@@ -311,7 +329,7 @@ class _MontagePlayerState extends State<MontagePlayer>
 
   Widget _buildClipVisual() {
     final clip = _clips[_index];
-    final asset = widget.assetsByPath[clip.filePath];
+    final asset = _assetFor(clip);
 
     if (_loading) {
       return const ColoredBox(
@@ -325,7 +343,7 @@ class _MontagePlayerState extends State<MontagePlayer>
         asset ??
             MediaAsset(
               id: clip.id,
-              path: clip.filePath,
+              path: clip.filePath ?? '',
               name: clip.sourceName.isEmpty ? 'Материал' : clip.sourceName,
               type: clip.type,
             ),

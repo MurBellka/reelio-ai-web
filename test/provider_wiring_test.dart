@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:reelio_ai/models/edit_plan.dart';
+import 'package:reelio_ai/models/transition.dart';
 import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/models/media_asset.dart';
 import 'package:reelio_ai/models/render_request.dart';
@@ -84,7 +85,7 @@ EditPlan _plan() => EditPlan(
       filePath: '/local/a.mp4',
       type: MediaType.video,
       duration: 8,
-      transition: 'cut',
+      transition: TransitionSpec(type: TransitionType.cut),
       mediaId: 'asset_a',
       start: 0,
       end: 8,

@@ -288,13 +288,15 @@ class ProjectController extends Notifier<ProjectState> {
     _emit(state.copyWith(plan: plan.copyWith(clips: list)));
   }
 
-  /// Меняет переход конкретного клипа. Хранится строкой каталога v2 (§2.1);
-  /// длительность и интенсивность worker берёт по умолчанию.
+  /// Меняет ТИП перехода конкретного клипа, СОХРАНЯЯ его длительность и
+  /// интенсивность (объект перехода v2 §2.1 не сводится к строке).
   void setClipTransition(int index, TransitionType type) {
     final plan = state.plan;
     if (plan == null || index < 0 || index >= plan.clips.length) return;
     final list = [...plan.clips];
-    list[index] = list[index].copyWith(transition: type.storageValue);
+    list[index] = list[index].copyWith(
+      transition: list[index].transition.copyWith(type: type),
+    );
     _emit(state.copyWith(plan: plan.copyWith(clips: list)));
   }
 

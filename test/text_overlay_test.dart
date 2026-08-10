@@ -5,6 +5,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reelio_ai/models/edit_plan.dart';
+import 'package:reelio_ai/models/transition.dart';
 import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/models/font_catalog.dart';
 import 'package:reelio_ai/models/text_overlay.dart';
@@ -26,7 +27,7 @@ EditPlan _emptyPlan() => const EditPlan(
       filePath: '/a.mp4',
       type: MediaType.video,
       duration: 12,
-      transition: 'cut',
+      transition: TransitionSpec(type: TransitionType.cut),
       mediaId: 'a',
       start: 0,
       end: 12,

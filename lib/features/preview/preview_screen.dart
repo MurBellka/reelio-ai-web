@@ -35,6 +35,9 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     }
 
     final total = plan.computedDuration;
+    final assetsById = <String, MediaAsset>{
+      for (final a in project.assets) a.id: a,
+    };
     final assetsByPath = <String, MediaAsset>{
       for (final a in project.assets) a.path: a,
     };
@@ -62,6 +65,7 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                         constraints: const BoxConstraints(maxHeight: 440),
                         child: MontagePlayer(
                           plan: plan,
+                          assetsById: assetsById,
                           assetsByPath: assetsByPath,
                           badge: const _DemoTag(),
                         ),

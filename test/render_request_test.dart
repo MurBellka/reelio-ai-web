@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reelio_ai/models/edit_plan.dart';
+import 'package:reelio_ai/models/transition.dart';
 import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/models/export_settings.dart';
 import 'package:reelio_ai/models/media_asset.dart';
@@ -90,7 +91,7 @@ void main() {
           duration: 3.5,
           start: 12,
           end: 15.5,
-          transition: 'crossfade',
+          transition: TransitionSpec(type: TransitionType.dissolve),
           mediaId: 'asset_a',
           sourceName: 'IMG_0042.MP4',
         ),
@@ -130,7 +131,7 @@ void main() {
           duration: 3,
           start: 0,
           end: 3,
-          transition: 'cut',
+          transition: TransitionSpec(type: TransitionType.cut),
           mediaId: 'asset_a',
         ),
         const EditClip(
@@ -138,7 +139,7 @@ void main() {
           filePath: '/local/photo.heic',
           type: MediaType.photo,
           duration: 2,
-          transition: 'fade',
+          transition: TransitionSpec(type: TransitionType.fadeBlack),
           mediaId: 'asset_b',
         ),
       ]);
@@ -167,7 +168,7 @@ void main() {
           duration: 3,
           start: 0,
           end: 3,
-          transition: 'cut',
+          transition: TransitionSpec(type: TransitionType.cut),
         ),
       ]);
 
@@ -190,7 +191,7 @@ void main() {
           duration: 3,
           start: 0,
           end: 3,
-          transition: 'cut',
+          transition: TransitionSpec(type: TransitionType.cut),
           mediaId: 'asset_a',
         ),
       ]);
@@ -221,7 +222,7 @@ void main() {
           duration: 3,
           start: 0,
           end: 3,
-          transition: 'cut',
+          transition: TransitionSpec(type: TransitionType.cut),
           mediaId: 'asset_a',
         ),
       ], export: export);
@@ -246,7 +247,7 @@ void main() {
           duration: 3,
           start: 0,
           end: 3,
-          transition: 'cut',
+          transition: TransitionSpec(type: TransitionType.cut),
           mediaId: 'asset_a',
         ),
       ], export: ExportSettings.defaults);
@@ -283,7 +284,7 @@ void main() {
           filePath: '/local/IMG_0042.MP4',
           type: MediaType.video,
           duration: 3,
-          transition: 'cut',
+          transition: TransitionSpec(type: TransitionType.cut),
           mediaId: 'asset_a',
         ),
       ]);
@@ -306,7 +307,7 @@ void main() {
           filePath: '/local/gone.mp4',
           type: MediaType.video,
           duration: 3,
-          transition: 'cut',
+          transition: TransitionSpec(type: TransitionType.cut),
           mediaId: 'asset_missing',
         ),
       ]);

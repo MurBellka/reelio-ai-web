@@ -7,6 +7,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reelio_ai/models/edit_plan.dart';
+import 'package:reelio_ai/models/transition.dart';
 import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/models/media_asset.dart';
 import 'package:reelio_ai/models/project_state.dart';
@@ -43,7 +44,7 @@ EditPlan _plan(List<MediaAsset> assets) => EditPlan(
         filePath: a.path,
         type: a.type,
         duration: 4,
-        transition: 'cut',
+        transition: TransitionSpec(type: TransitionType.cut),
         mediaId: a.id,
         start: a.type == MediaType.video ? 0 : null,
         end: a.type == MediaType.video ? 4 : null,

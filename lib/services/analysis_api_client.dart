@@ -160,7 +160,14 @@ class AnalysisApiClient {
     if (planJson is! Map) {
       throw const AiEditingException('Сервер вернул некорректный план.');
     }
-    return EditPlan.fromJson(planJson.cast<String, dynamic>());
+    try {
+      return EditPlan.fromJson(planJson.cast<String, dynamic>());
+    } on EditPlanFormatException catch (e) {
+      // Контрактное несоответствие плана — понятная ошибка, а не type-cast crash.
+      throw AiEditingException(
+        'Сервер вернул план в неизвестном формате (${e.message}).',
+      );
+    }
   }
 
   /// GET /catalog — переходы, шрифты, лимиты для UI.

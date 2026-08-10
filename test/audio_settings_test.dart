@@ -6,6 +6,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:reelio_ai/models/edit_plan.dart';
+import 'package:reelio_ai/models/transition.dart';
 import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/state/providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -23,7 +24,7 @@ EditPlan _plan({AudioSettings audio = AudioSettings.defaults}) => EditPlan(
       filePath: '/a.mp4',
       type: MediaType.video,
       duration: 8,
-      transition: 'cut',
+      transition: TransitionSpec(type: TransitionType.cut),
       mediaId: 'a',
       start: 0,
       end: 8,

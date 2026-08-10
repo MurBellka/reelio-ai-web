@@ -79,7 +79,6 @@ EditPlan parseGeminiPlan(
     if (duration > remaining) duration = remaining;
     if (duration < 0.4) continue;
 
-    final transition = (c['transition'] as String?) ?? 'cut';
     clips.add(
       EditClip(
         id: uuid.v4(),
@@ -88,9 +87,13 @@ EditPlan parseGeminiPlan(
         duration: double.parse(duration.toStringAsFixed(2)),
         start: asset.isVideo ? start : null,
         end: asset.isVideo ? start + duration : null,
-        transition: TransitionType.isKnownStorage(transition)
-            ? transition
-            : 'cut',
+        // v1-путь: поведение не меняем — известный переход как есть, неизвестный
+        // → cut (стык). Оборачиваем в объект-контракт, не теряя семантику.
+        transition: TransitionSpec(
+          type: TransitionType.isKnownStorage(c['transition'] as String?)
+              ? TransitionType.fromStorage(c['transition'] as String?)
+              : TransitionType.cut,
+        ),
         sourceName: asset.name,
         mediaId: mediaId,
         reason: (c['reason'] as String?) ?? '',

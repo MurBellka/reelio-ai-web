@@ -9,6 +9,7 @@ import 'package:http/testing.dart';
 import 'package:reelio_ai/features/export/export_screen.dart';
 import 'package:reelio_ai/features/render/render_section.dart';
 import 'package:reelio_ai/models/edit_plan.dart';
+import 'package:reelio_ai/models/transition.dart';
 import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/models/export_settings.dart';
 import 'package:reelio_ai/models/media_asset.dart';
@@ -51,7 +52,7 @@ EditPlan _plan({ExportSettings? export}) => EditPlan(
       duration: 10,
       start: 0,
       end: 10,
-      transition: 'cut',
+      transition: TransitionSpec(type: TransitionType.cut),
       mediaId: 'assetA',
       sourceName: 'a.mp4',
     ),

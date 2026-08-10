@@ -167,3 +167,118 @@ enum TransitionType {
     return map;
   }
 }
+
+/// Интенсивность перехода (контракт v2 §2.1): calm | balanced | dynamic.
+enum TransitionIntensity {
+  calm('calm'),
+  balanced('balanced'),
+  dynamicIntensity('dynamic');
+
+  const TransitionIntensity(this.storageValue);
+  final String storageValue;
+
+  static TransitionIntensity fromStorage(String? value) {
+    for (final i in TransitionIntensity.values) {
+      if (i.storageValue == value) return i;
+    }
+    return TransitionIntensity.balanced;
+  }
+}
+
+/// Переход клипа как ОБЪЕКТ контракта v2 (§2.1): `{type, durationSeconds,
+/// intensity}`.
+///
+/// Прежде клиент хранил переход строкой и терял `durationSeconds`/`intensity`.
+/// `TransitionSpec` сохраняет все три параметра. Читает и объект v2, и строку
+/// v1 (обратная совместимость, §7). Неизвестный тип НЕ проглатывается молча:
+/// подставляется контрактный [TransitionType.fallback], а причина фиксируется
+/// в [note].
+class TransitionSpec {
+  const TransitionSpec({
+    required this.type,
+    this.durationSeconds,
+    this.intensity = TransitionIntensity.balanced,
+    this.note,
+  });
+
+  /// Тип перехода (каталог §2.1).
+  final TransitionType type;
+
+  /// Длительность 0.15..1.5 c; `null` — worker подставит по [intensity].
+  final double? durationSeconds;
+
+  final TransitionIntensity intensity;
+
+  /// Контрактный fallback: заполняется, если исходный тип не распознан.
+  final String? note;
+
+  /// Отсутствие перехода (стык). Первый клип плана всегда такой.
+  static const TransitionSpec cut = TransitionSpec(type: TransitionType.cut);
+
+  static double? _asDouble(Object? v) {
+    if (v is num) return v.toDouble();
+    if (v is String) return double.tryParse(v);
+    return null;
+  }
+
+  /// Разбирает `transition` из плана: объект v2, строку v1 или отсутствие.
+  factory TransitionSpec.fromJson(Object? json) {
+    if (json is Map) {
+      final raw = json['type'];
+      final rawStr = raw is String ? raw : null;
+      final known = TransitionType.isKnownStorage(rawStr);
+      final type = TransitionType.fromStorage(rawStr);
+      final dur = _asDouble(json['durationSeconds']);
+      return TransitionSpec(
+        type: type,
+        durationSeconds: dur?.clamp(0.15, 1.5).toDouble(),
+        intensity: TransitionIntensity.fromStorage(
+          json['intensity'] as String?,
+        ),
+        note: known
+            ? null
+            : 'Неизвестный переход «${rawStr ?? raw}» заменён на «${type.storageValue}».',
+      );
+    }
+    // v1: строка вместо объекта (§7 контракта — принимается).
+    if (json is String) {
+      final known = TransitionType.isKnownStorage(json);
+      final type = TransitionType.fromStorage(json);
+      return TransitionSpec(
+        type: type,
+        note: known
+            ? null
+            : 'Неизвестный переход «$json» заменён на «${type.storageValue}».',
+      );
+    }
+    // Поле отсутствует/невалидно → безопасный стык.
+    return TransitionSpec.cut;
+  }
+
+  Map<String, dynamic> toJson() => {
+    'type': type.storageValue,
+    'durationSeconds': durationSeconds,
+    'intensity': intensity.storageValue,
+  };
+
+  TransitionSpec copyWith({
+    TransitionType? type,
+    double? durationSeconds,
+    TransitionIntensity? intensity,
+  }) => TransitionSpec(
+    type: type ?? this.type,
+    durationSeconds: durationSeconds ?? this.durationSeconds,
+    intensity: intensity ?? this.intensity,
+    note: note,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is TransitionSpec &&
+      other.type == type &&
+      other.durationSeconds == durationSeconds &&
+      other.intensity == intensity;
+
+  @override
+  int get hashCode => Object.hash(type, durationSeconds, intensity);
+}

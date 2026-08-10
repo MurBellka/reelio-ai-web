@@ -49,7 +49,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   }
 
   Future<void> _pickTransition(int index, EditClip clip) async {
-    final current = TransitionType.fromStorage(clip.transition);
+    final current = clip.transition.type;
     final picked = await showModalBottomSheet<TransitionType>(
       context: context,
       isScrollControlled: true,
@@ -401,7 +401,7 @@ class _Timeline extends StatelessWidget {
 
   MediaAsset _assetOf(EditClip clip) => MediaAsset(
     id: clip.id,
-    path: clip.filePath,
+    path: clip.filePath ?? '',
     name: clip.sourceName,
     type: clip.type,
     durationSeconds: clip.type == MediaType.video ? clip.duration : null,
@@ -423,7 +423,7 @@ class _Timeline extends StatelessWidget {
         itemBuilder: (context, index) {
           final clip = plan.clips[index];
           final isCover = plan.coverClipId == clip.id;
-          final transition = TransitionType.fromStorage(clip.transition);
+          final transition = clip.transition.type;
           // Только миниатюра — ручка перетаскивания. Чип перехода вынесен из
           // слушателя, иначе тап по нему начинал бы drag.
           return Padding(

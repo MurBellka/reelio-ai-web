@@ -477,7 +477,9 @@ class RenderController extends Notifier<RenderUiState> {
 
     final used = <String>{};
     for (final clip in plan.clips) {
-      final asset = byId[clip.mediaId] ?? byPath[clip.filePath];
+      final asset =
+          byId[clip.mediaId] ??
+          (clip.filePath != null ? byPath[clip.filePath] : null);
       if (asset == null) {
         throw RenderRequestException(
           'Фрагмент «${clip.sourceName.isEmpty ? clip.id : clip.sourceName}» '

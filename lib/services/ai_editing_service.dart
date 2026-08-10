@@ -4,6 +4,7 @@ import '../core/media_validation.dart';
 import '../models/edit_plan.dart';
 import '../models/edit_request.dart';
 import '../models/enums.dart';
+import '../models/transition.dart';
 import '../models/export_settings.dart';
 import '../models/media_asset.dart';
 import '../models/upload_ticket.dart' show UploadProgress;
@@ -197,7 +198,11 @@ class MockAiEditingService implements AiEditingService {
           duration: duration,
           start: isVideo ? _pickStart(asset, duration) : null,
           end: isVideo ? _pickStart(asset, duration) + duration : null,
-          transition: i == 0 ? 'cut' : style.defaultTransition,
+          transition: TransitionSpec(
+            type: i == 0
+                ? TransitionType.cut
+                : TransitionType.fromStorage(style.defaultTransition),
+          ),
           sourceName: asset.name,
           // Рендер адресует исходники только по mediaId (контракт §2).
           mediaId: asset.id,

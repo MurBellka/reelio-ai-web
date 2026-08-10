@@ -26,7 +26,7 @@ EditPlan _plan() => const EditPlan(
       filePath: '/a.mp4',
       type: MediaType.video,
       duration: 6,
-      transition: 'cut',
+      transition: TransitionSpec(type: TransitionType.cut),
       mediaId: 'a',
       sourceName: 'a.mp4',
       start: 0,
@@ -37,7 +37,7 @@ EditPlan _plan() => const EditPlan(
       filePath: '/b.mp4',
       type: MediaType.video,
       duration: 6,
-      transition: 'crossfade',
+      transition: TransitionSpec(type: TransitionType.dissolve),
       mediaId: 'b',
       sourceName: 'b.mp4',
       start: 0,
@@ -114,17 +114,23 @@ void main() {
       final controller = controllerWithPlan();
       controller.setClipTransition(1, TransitionType.wipeUp);
       final clips = controller.state.plan!.clips;
-      expect(clips[1].transition, 'wipeUp');
+      expect(clips[1].transition.type, TransitionType.wipeUp);
       // Соседний клип не тронут.
-      expect(clips[0].transition, 'cut');
+      expect(clips[0].transition.type, TransitionType.cut);
     });
 
     test('индекс вне диапазона — без изменений', () {
       final controller = controllerWithPlan();
       controller.setClipTransition(9, TransitionType.blur);
       controller.setClipTransition(-1, TransitionType.blur);
-      expect(controller.state.plan!.clips[0].transition, 'cut');
-      expect(controller.state.plan!.clips[1].transition, 'crossfade');
+      expect(
+        controller.state.plan!.clips[0].transition.type,
+        TransitionType.cut,
+      );
+      expect(
+        controller.state.plan!.clips[1].transition.type,
+        TransitionType.dissolve,
+      );
     });
   });
 
@@ -164,8 +170,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        container.read(projectProvider).plan!.clips[0].transition,
-        'fadeBlack',
+        container.read(projectProvider).plan!.clips[0].transition.type,
+        TransitionType.fadeBlack,
       );
     });
   });

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reelio_ai/models/edit_plan.dart';
+import 'package:reelio_ai/models/transition.dart';
 import 'package:reelio_ai/models/edit_request.dart';
 import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/models/media_asset.dart';
@@ -111,7 +112,7 @@ void main() {
         ],
       };
       final plan = parseGeminiPlan(json, request: requestWith(_assets));
-      expect(plan.clips.first.transition, 'cut');
+      expect(plan.clips.first.transition.type, TransitionType.cut);
     });
   });
 }

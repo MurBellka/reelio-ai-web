@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:reelio_ai/core/constants.dart';
 import 'package:reelio_ai/models/edit_plan.dart';
+import 'package:reelio_ai/models/transition.dart';
 import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/models/media_asset.dart';
 import 'package:reelio_ai/services/media_upload_service.dart';
@@ -47,7 +48,7 @@ EditPlan _plan() => EditPlan(
       duration: 10,
       start: 0,
       end: 10,
-      transition: 'cut',
+      transition: TransitionSpec(type: TransitionType.cut),
       mediaId: 'assetA',
       sourceName: 'a.mp4',
     ),

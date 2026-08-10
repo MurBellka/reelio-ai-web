@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:reelio_ai/features/processing/processing_screen.dart';
 import 'package:reelio_ai/models/edit_plan.dart';
+import 'package:reelio_ai/models/transition.dart';
 import 'package:reelio_ai/models/edit_request.dart';
 import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/models/media_asset.dart';
@@ -41,7 +42,7 @@ EditPlan _plan() => EditPlan(
       filePath: '/local/a1.mp4',
       type: MediaType.video,
       duration: 8,
-      transition: 'cut',
+      transition: TransitionSpec(type: TransitionType.cut),
       mediaId: 'a1',
       start: 0,
       end: 8,
