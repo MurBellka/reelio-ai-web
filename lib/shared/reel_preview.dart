@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
 import '../models/enums.dart';
+import '../models/font_catalog.dart';
 import '../models/media_asset.dart';
 import 'platform_media.dart';
 
@@ -15,9 +16,9 @@ List<Color> gradientForStyle(EditStyle style) => switch (style) {
 
 /// Вертикальная 9:16 поверхность демонстрационного ролика.
 ///
-/// Показывает обложку (фото) или стилизованный градиент, пример субтитров,
-/// значок музыки и элементы управления. Это убедительное демо, а не результат
-/// настоящего рендера.
+/// Показывает обложку (фото) или стилизованный градиент, пример субтитров
+/// и элементы управления. Это убедительное демо, а не результат настоящего
+/// рендера.
 class DemoReelSurface extends StatelessWidget {
   const DemoReelSurface({
     super.key,
@@ -27,7 +28,6 @@ class DemoReelSurface extends StatelessWidget {
     this.showPlay = false,
     this.isPlaying = false,
     this.progress,
-    this.musicLabel,
     this.badge,
     this.onTap,
     this.captionColorHex = '#FFFFFF',
@@ -40,7 +40,6 @@ class DemoReelSurface extends StatelessWidget {
   final bool showPlay;
   final bool isPlaying;
   final double? progress;
-  final String? musicLabel;
   final Widget? badge;
   final VoidCallback? onTap;
   final String captionColorHex;
@@ -98,15 +97,6 @@ class DemoReelSurface extends StatelessWidget {
                   ),
                 ),
                 if (badge != null) Positioned(top: 14, left: 14, child: badge!),
-                if (musicLabel != null)
-                  Positioned(
-                    top: 14,
-                    right: 14,
-                    child: _GlassChip(
-                      icon: Icons.music_note_rounded,
-                      label: musicLabel!,
-                    ),
-                  ),
                 if (showPlay)
                   Center(
                     child: AnimatedScale(
@@ -176,12 +166,15 @@ class _CaptionText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = Theme.of(context).textTheme.titleMedium!;
+    // Тот же шрифт субтитров (§6, default inter) и веса, что уйдут в MP4.
+    final base = Theme.of(
+      context,
+    ).textTheme.titleMedium!.copyWith(fontFamily: kCaptionPreviewFont.family);
     final resolved = switch (style) {
-      CaptionStyle.clean => base.copyWith(fontWeight: FontWeight.w600),
-      CaptionStyle.bold => base.copyWith(fontWeight: FontWeight.w900),
+      CaptionStyle.clean => base.copyWith(fontWeight: FontWeight.w500),
+      CaptionStyle.bold => base.copyWith(fontWeight: FontWeight.w700),
       CaptionStyle.karaoke => base.copyWith(
-        fontWeight: FontWeight.w800,
+        fontWeight: FontWeight.w700,
         letterSpacing: 0.5,
       ),
     };
@@ -208,38 +201,6 @@ class _CaptionText extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _GlassChip extends StatelessWidget {
-  const _GlassChip({required this.icon, required this.label});
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: Colors.white),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
       ),
     );
   }

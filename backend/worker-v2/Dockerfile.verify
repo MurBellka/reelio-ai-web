@@ -1,0 +1,47 @@
+# Образ для проверки §17: русский TextOverlay физически виден в кадрах MP4.
+#
+# Отличается от рабочего образа ровно двумя вещами: сюда едут инструменты
+# (tools/) и точка входа — скрипт проверки, а не worker. Всё остальное —
+# та же база, тот же ffmpeg с libass, те же шрифты, — иначе проверка
+# доказывала бы что-то про другой образ.
+#
+# Контекст сборки — корень репозитория:
+#
+#   docker build -f backend/worker-v2/Dockerfile.verify -t reelio-worker-v2-verify .
+#   docker run --rm reelio-worker-v2-verify
+#
+# Код выхода 0 — текст виден; 1 — не виден либо сборка без libass.
+
+FROM node:22-bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ffmpeg \
+      fontconfig \
+      ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY backend/worker-v2/package.json ./
+COPY backend/worker-v2/src/ ./src/
+COPY backend/worker-v2/tools/ ./tools/
+COPY assets/fonts/ /usr/share/fonts/truetype/reelio/
+# fc-cache без аргументов перечитывает все стандартные каталоги: fontconfig
+# сканирует только их, и шрифт вне такого каталога libass не найдёт по имени.
+RUN fc-cache -f
+
+# Проверка, что libass и шрифты на месте, — до запуска самой проверки.
+# Если ffmpeg собран без libass, дальше идти незачем.
+RUN ffmpeg -hide_banner -filters 2>/dev/null | grep -q ' subtitles ' \
+ || (echo 'ffmpeg собран без libass — фильтр subtitles недоступен' && exit 1)
+RUN fc-list | grep -qi montserrat \
+ || (echo 'шрифт Montserrat не найден в /usr/share/fonts/truetype/reelio' && exit 1)
+# Отдельное имя Medium обязано индексироваться: по нему libass берёт реальный
+# файл Medium, иначе вес medium молча деградирует в Regular.
+RUN fc-list | grep -qi 'montserrat medium' \
+ || (echo 'начертание «Montserrat Medium» не проиндексировано fontconfig' && exit 1)
+
+ENV REELIO_FONTS_DIR=/usr/share/fonts/truetype/reelio
+
+ENTRYPOINT ["node", "tools/verify-text-visible.mjs"]

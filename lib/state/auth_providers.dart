@@ -119,7 +119,7 @@ class AccountUsage {
 class AccountApi {
   AccountApi({required this.tokens, http.Client? client, String? baseUrl})
     : _client = client ?? http.Client(),
-      _baseUrl = (baseUrl ?? AppConfig.backendBaseUrl).replaceAll(
+      _baseUrl = (baseUrl ?? AppConfig.activeBackendUrl).replaceAll(
         RegExp(r'/+$'),
         '',
       );

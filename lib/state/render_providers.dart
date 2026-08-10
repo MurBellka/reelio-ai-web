@@ -11,6 +11,7 @@ import '../models/project_state.dart';
 import '../models/render_request.dart';
 import '../models/upload_ticket.dart';
 import '../services/media_upload_service.dart';
+import '../services/upload_coordinator.dart';
 import 'auth_providers.dart';
 import '../services/backend_version_service.dart';
 import '../services/render_api_client.dart';
@@ -197,7 +198,7 @@ class RenderUiState {
 /// Адрес backend'а. Отдельный провайдер нужен ровно затем же, зачем и
 /// транспорт: тест задаёт окружение, а сборка клиента остаётся настоящей.
 final renderBaseUrlProvider = Provider<String>(
-  (ref) => AppConfig.backendBaseUrl,
+  (ref) => AppConfig.activeBackendUrl,
 );
 
 /// HTTP-транспорт для клиентов API.
@@ -229,6 +230,15 @@ final mediaUploadServiceProvider = Provider<MediaUploadService>((ref) {
   ref.onDispose(service.close);
   return service;
 });
+
+/// Единая координация загрузки (§4D.3). Использует те же клиенты, что и рендер,
+/// поэтому загруженные материалы переиспользуются, а не грузятся дважды.
+final uploadCoordinatorProvider = Provider<UploadCoordinator>(
+  (ref) => UploadCoordinator(
+    api: ref.watch(renderApiClientProvider),
+    uploader: ref.watch(mediaUploadServiceProvider),
+  ),
+);
 
 final renderPollConfigProvider = Provider<RenderPollConfig>(
   (_) => const RenderPollConfig(),
@@ -279,7 +289,6 @@ class RenderController extends Notifier<RenderUiState> {
 
   /// Проверка поколения API перед отправкой материалов.
   BackendVersionService get _version => ref.read(backendVersionServiceProvider);
-  MediaUploadService get _uploads => ref.read(mediaUploadServiceProvider);
   RenderPollConfig get _pollConfig => ref.read(renderPollConfigProvider);
 
   void _set(RenderUiState next) {
@@ -315,6 +324,20 @@ class RenderController extends Notifier<RenderUiState> {
   Future<void> start() async {
     if (state.isBusy) return;
     _cancelRequested = false;
+
+    // §4C.7/§4C.8: при поднятом флаге v2 без адреса беты файлы не загружаем —
+    // ни на v1 (смешивание запрещено), ни «в никуда».
+    if (AppConfig.betaUnavailable) {
+      _fail(
+        const RenderError(
+          code: 'BETA_UNAVAILABLE',
+          message:
+              'Бета недоступна: не задан адрес beta-сервиса. '
+              'Материалы не загружены. Попробуйте позже.',
+        ),
+      );
+      return;
+    }
 
     final project = ref.read(projectProvider);
     final storage = ref.read(storageServiceProvider);
@@ -372,39 +395,15 @@ class RenderController extends Notifier<RenderUiState> {
     );
 
     try {
-      // Предлагаем путь с uid владельца; авторитетным станет тот, что вернёт
-      // сервер, — его и понесём дальше.
-      final proposed = [
-        for (final asset in usedAssets)
-          RenderAsset(
-            id: asset.id,
-            type: asset.type,
-            objectPath: RenderAsset.proposedSourcePath(
-              ownerUid: ownerUid,
-              projectId: project.id,
-              asset: asset,
-            ),
-            durationSeconds: asset.durationSeconds,
-            width: asset.width,
-            height: asset.height,
-          ),
-      ];
-
-      final tickets = await _api.requestUploadTickets(
-        projectId: project.id,
-        assets: proposed,
-        contentTypes: MediaUploadService.contentTypesOf(usedAssets),
-      );
-      _throwIfCancelled();
-
-      // Пути берём ИЗ ОТВЕТА сервера: клиент их не изобретает.
-      final objectPaths = {
-        for (final ticket in tickets) ticket.assetId: ticket.objectPath,
-      };
-
-      final sizes = await _uploads.uploadAll(
+      // §4D.3: единая загрузка. Уже загруженные материалы (по стабильному
+      // mediaId в манифесте проекта) переиспользуются — повторный рендер и
+      // возврат назад не грузят их снова. Загружаются только отсутствующие.
+      final coordinator = ref.read(uploadCoordinatorProvider);
+      final result = await coordinator.ensureUploaded(
         assets: usedAssets,
-        tickets: tickets,
+        manifest: project.uploadManifest,
+        ownerUid: ownerUid,
+        projectId: project.id,
         onProgress: (progress) {
           if (state.stage == RenderUiStage.uploading) {
             _set(state.copyWith(upload: progress));
@@ -412,7 +411,16 @@ class RenderController extends Notifier<RenderUiState> {
         },
         isCancelled: () => _cancelRequested,
       );
+      ref.read(projectProvider.notifier).recordUploads(result.uploaded);
       _throwIfCancelled();
+
+      final objectPaths = result.objectPaths;
+      final sizes = <String, int>{
+        for (final a in usedAssets)
+          if (project.uploadManifest.forMedia(a.id) != null)
+            a.id: project.uploadManifest.forMedia(a.id)!.sizeBytes,
+        for (final u in result.uploaded) u.mediaId: u.sizeBytes,
+      };
 
       _set(state.copyWith(stage: RenderUiStage.submitting));
 
@@ -469,7 +477,9 @@ class RenderController extends Notifier<RenderUiState> {
 
     final used = <String>{};
     for (final clip in plan.clips) {
-      final asset = byId[clip.mediaId] ?? byPath[clip.filePath];
+      final asset =
+          byId[clip.mediaId] ??
+          (clip.filePath != null ? byPath[clip.filePath] : null);
       if (asset == null) {
         throw RenderRequestException(
           'Фрагмент «${clip.sourceName.isEmpty ? clip.id : clip.sourceName}» '

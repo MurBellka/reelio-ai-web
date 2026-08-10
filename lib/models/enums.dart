@@ -54,30 +54,6 @@ enum EditStyle {
   );
 }
 
-/// Музыкальные пресеты внутреннего каталога.
-enum MusicTrack {
-  none('Без музыки', 0, Icons.music_off_rounded),
-  chill('Chill', 92, Icons.nightlight_round),
-  energy('Energy', 128, Icons.local_fire_department_rounded),
-  cinematic('Cinematic', 80, Icons.theaters_rounded),
-  trending('Trending', 120, Icons.trending_up_rounded);
-
-  const MusicTrack(this.label, this.bpm, this.icon);
-
-  final String label;
-  final int bpm;
-  final IconData icon;
-
-  bool get hasAudio => this != MusicTrack.none;
-
-  String get storageValue => name;
-
-  static MusicTrack fromStorage(String value) => MusicTrack.values.firstWhere(
-    (e) => e.name == value,
-    orElse: () => MusicTrack.none,
-  );
-}
-
 /// Стиль отображения субтитров.
 enum CaptionStyle {
   clean('Чистый'),

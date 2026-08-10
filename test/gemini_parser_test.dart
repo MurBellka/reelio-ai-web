@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reelio_ai/models/edit_plan.dart';
+import 'package:reelio_ai/models/transition.dart';
 import 'package:reelio_ai/models/edit_request.dart';
 import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/models/media_asset.dart';
@@ -12,7 +13,7 @@ EditRequest requestWith(List<MediaAsset> assets) => EditRequest(
   style: EditStyle.dynamicStyle,
   durationSeconds: 30,
   captions: CaptionSettings.defaults,
-  music: MusicSettings.defaults,
+  audio: AudioSettings.defaults,
 );
 
 final _assets = [
@@ -50,13 +51,13 @@ void main() {
           {'mediaId': 'p1', 'start': 0, 'end': 3, 'transition': 'fade'},
         ],
         'captions': {'enabled': true, 'language': 'ru', 'style': 'bold'},
-        'music': {'mood': 'energy', 'volume': 0.6},
+        'audio': {'keepOriginal': false},
       };
       final plan = parseGeminiPlan(json, request: requestWith(_assets));
       expect(plan.style, EditStyle.cinematic);
       expect(plan.clips, hasLength(2));
       expect(plan.clips.first.mediaId, 'v1');
-      expect(plan.music.track, MusicTrack.energy);
+      expect(plan.audio.keepOriginal, isFalse);
       expect(plan.computedDuration, lessThanOrEqualTo(20.001));
       // 4K не выбирается, т.к. источник 1920 → 1080p максимум.
       expect(plan.export.height, 1920);
@@ -111,7 +112,7 @@ void main() {
         ],
       };
       final plan = parseGeminiPlan(json, request: requestWith(_assets));
-      expect(plan.clips.first.transition, 'cut');
+      expect(plan.clips.first.transition.type, TransitionType.cut);
     });
   });
 }

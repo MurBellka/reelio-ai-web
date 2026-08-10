@@ -55,12 +55,17 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Build web
-        # REELIO_BACKEND_URL — не секрет (обычный URL). Ключ Gemini НИКОГДА не
-        # передаётся в сборку и не попадает в Pages artifact.
+        # Все три dart-define — НЕсекретные repo variables (URL и feature flag).
+        # Ключ Gemini НИКОГДА не передаётся в сборку и не попадает в Pages
+        # artifact. Если REELIO_V2_ENABLED/REELIO_BETA_BACKEND_URL не заданы,
+        # они разворачиваются в пустую строку: v2Enabled → false, и сборка
+        # безопасно остаётся v1 (§4C.9).
         run: >
           flutter build web --release
           --base-href /reelio-ai-web/
           --dart-define=REELIO_BACKEND_URL=${{ vars.REELIO_BACKEND_URL }}
+          --dart-define=REELIO_BETA_BACKEND_URL=${{ vars.REELIO_BETA_BACKEND_URL }}
+          --dart-define=REELIO_V2_ENABLED=${{ vars.REELIO_V2_ENABLED }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

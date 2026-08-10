@@ -6,10 +6,8 @@ import '../models/edit_request.dart';
 import '../models/enums.dart';
 import '../models/export_settings.dart';
 import '../models/media_asset.dart';
+import '../models/transition.dart';
 import 'ai_editing_service.dart';
-
-/// Разрешённые типы переходов (allowlist).
-const _allowedTransitions = {'cut', 'fade', 'crossfade', 'slide'};
 
 EditStyle _styleFrom(String? v) => switch (v) {
   'dynamic' || 'dynamicStyle' => EditStyle.dynamicStyle,
@@ -17,15 +15,6 @@ EditStyle _styleFrom(String? v) => switch (v) {
   'calm' => EditStyle.calm,
   'minimal' => EditStyle.minimal,
   _ => EditStyle.dynamicStyle,
-};
-
-MusicTrack _moodFrom(String? v) => switch (v) {
-  'energy' => MusicTrack.energy,
-  'chill' => MusicTrack.chill,
-  'cinematic' => MusicTrack.cinematic,
-  'trending' => MusicTrack.trending,
-  'none' || null || '' => MusicTrack.none,
-  _ => MusicTrack.chill,
 };
 
 CaptionStyle _captionStyleFrom(String? v) => switch (v) {
@@ -90,7 +79,6 @@ EditPlan parseGeminiPlan(
     if (duration > remaining) duration = remaining;
     if (duration < 0.4) continue;
 
-    final transition = (c['transition'] as String?) ?? 'cut';
     clips.add(
       EditClip(
         id: uuid.v4(),
@@ -99,9 +87,13 @@ EditPlan parseGeminiPlan(
         duration: double.parse(duration.toStringAsFixed(2)),
         start: asset.isVideo ? start : null,
         end: asset.isVideo ? start + duration : null,
-        transition: _allowedTransitions.contains(transition)
-            ? transition
-            : 'cut',
+        // v1-путь: поведение не меняем — известный переход как есть, неизвестный
+        // → cut (стык). Оборачиваем в объект-контракт, не теряя семантику.
+        transition: TransitionSpec(
+          type: TransitionType.isKnownStorage(c['transition'] as String?)
+              ? TransitionType.fromStorage(c['transition'] as String?)
+              : TransitionType.cut,
+        ),
         sourceName: asset.name,
         mediaId: mediaId,
         reason: (c['reason'] as String?) ?? '',
@@ -125,10 +117,12 @@ EditPlan parseGeminiPlan(
     sampleText: request.captions.sampleText,
   );
 
-  final musicJson = (json['music'] as Map?)?.cast<String, dynamic>();
-  final music = MusicSettings(
-    track: _moodFrom(musicJson?['mood'] as String?),
-    volume: (musicJson?['volume'] as num?)?.toDouble() ?? request.music.volume,
+  // Музыка убрана из контракта v2 (§0). Если сервер прислал звук, читаем
+  // единственный переключатель; иначе оставляем выбор пользователя.
+  final audioJson = (json['audio'] as Map?)?.cast<String, dynamic>();
+  final audio = AudioSettings(
+    keepOriginal:
+        audioJson?['keepOriginal'] as bool? ?? request.audio.keepOriginal,
   );
 
   final export = ExportResolver.build(
@@ -143,7 +137,7 @@ EditPlan parseGeminiPlan(
     style: _styleFrom(json['style'] as String?),
     durationSeconds: target,
     captions: captions,
-    music: music,
+    audio: audio,
     clips: clips,
     coverClipId: clips.first.id,
     export: export,

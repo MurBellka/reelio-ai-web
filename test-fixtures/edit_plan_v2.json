@@ -1,0 +1,56 @@
+{
+  "id": "plan_an_fixture",
+  "prompt": "динамичный ролик из тестового материала",
+  "style": "dynamicStyle",
+  "durationSeconds": 10,
+  "audio": { "keepOriginal": true },
+  "captions": {
+    "enabled": true,
+    "language": "ru",
+    "style": "bold",
+    "colorHex": "#FFFFFF",
+    "highlightColorHex": "#A855F7",
+    "fontId": "inter",
+    "position": "bottom",
+    "maxLineChars": 26,
+    "cues": []
+  },
+  "textOverlays": [
+    {
+      "id": "text_1",
+      "text": "Привет, мир",
+      "clipId": "clip_1",
+      "startSeconds": 0.5,
+      "endSeconds": 4.0,
+      "position": { "anchor": "bottom", "x": 0.5, "y": 0.8 },
+      "fontId": "montserrat",
+      "fontWeight": "bold",
+      "fontSizeRatio": 0.055,
+      "colorHex": "#FFFFFF",
+      "align": "center",
+      "opacity": 1,
+      "animation": "fade"
+    }
+  ],
+  "coverClipId": "clip_1",
+  "clips": [
+    {
+      "id": "clip_1",
+      "mediaId": "asset_a",
+      "type": "video",
+      "duration": 6,
+      "start": 0,
+      "end": 6,
+      "transition": { "type": "cut", "durationSeconds": null, "intensity": "balanced" }
+    },
+    {
+      "id": "clip_2",
+      "mediaId": "asset_b",
+      "type": "video",
+      "duration": 4,
+      "start": 2,
+      "end": 6,
+      "transition": { "type": "dissolve", "durationSeconds": 0.45, "intensity": "dynamic" }
+    }
+  ]
+}

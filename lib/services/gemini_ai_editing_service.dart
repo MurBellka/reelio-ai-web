@@ -24,7 +24,7 @@ class GeminiAiEditingService implements AiEditingService {
     this.timeout = AppConfig.requestTimeout,
     this.maxRetries = AppConfig.maxRetries,
     this.minInterval = AppConfig.minRequestInterval,
-  }) : _baseUrl = baseUrl ?? AppConfig.backendBaseUrl,
+  }) : _baseUrl = baseUrl ?? AppConfig.activeBackendUrl,
        _client = client ?? http.Client();
 
   /// Источник токенов. `/edit-plan` защищён так же, как остальной API:
@@ -51,7 +51,18 @@ class GeminiAiEditingService implements AiEditingService {
   }
 
   @override
-  Future<EditPlan> createEditPlan(EditRequest request) async {
+  Future<EditPlan> createEditPlan(
+    EditRequest request, {
+    ProcessingReporter? onProgress,
+  }) async {
+    // v1 не грузит исходники отдельно (их отправляет сам /edit-plan) — сообщаем
+    // экрану обработки этап анализа.
+    onProgress?.call(
+      const ProcessingProgress.analyzing(
+        analysisPhase: 'analyzing',
+        analysisMessage: 'AI собирает монтажный план',
+      ),
+    );
     // Клиентский rate limit.
     final last = _lastRequest;
     if (last != null && DateTime.now().difference(last) < minInterval) {

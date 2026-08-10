@@ -1,0 +1,29 @@
+{
+  "id": "plan_v1_legacy",
+  "prompt": "старый черновик v1",
+  "style": "dynamicStyle",
+  "durationSeconds": 5,
+  "audio": { "keepOriginal": true },
+  "captions": {
+    "enabled": true,
+    "language": "ru",
+    "style": "bold",
+    "colorHex": "#FFFFFF",
+    "sampleText": "пример"
+  },
+  "textOverlays": [],
+  "coverClipId": "clip_1",
+  "clips": [
+    {
+      "id": "clip_1",
+      "mediaId": "asset_a",
+      "type": "video",
+      "duration": 5,
+      "start": 0,
+      "end": 5,
+      "filePath": "/local/device/old_video.mp4",
+      "sourceName": "old_video.mp4",
+      "transition": "crossfade"
+    }
+  ]
+}

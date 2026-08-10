@@ -163,7 +163,11 @@ class RenderRequest {
     final clips = <EditClip>[];
     final usedAssetIds = <String>{};
     for (final clip in plan.clips) {
-      final asset = assetsById[clip.mediaId] ?? assetsByPath[clip.filePath];
+      // Экспорт адресует материал по серверному mediaId; filePath — только
+      // клиентский резерв для старых черновиков и в /render не уходит.
+      final asset =
+          assetsById[clip.mediaId] ??
+          (clip.filePath != null ? assetsByPath[clip.filePath] : null);
       if (asset == null) {
         throw RenderRequestException(
           'Фрагмент «${clip.sourceName.isEmpty ? clip.id : clip.sourceName}» '

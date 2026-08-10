@@ -9,6 +9,7 @@ import '../../core/media_validation.dart';
 import '../../core/theme.dart';
 import '../../models/edit_plan.dart';
 import '../../models/enums.dart';
+import '../../models/font_catalog.dart';
 import '../../models/media_asset.dart';
 import '../../shared/platform_media.dart';
 import '../../shared/unsupported_preview_placeholder.dart';
@@ -23,11 +24,17 @@ class MontagePlayer extends StatefulWidget {
   const MontagePlayer({
     super.key,
     required this.plan,
-    required this.assetsByPath,
+    required this.assetsById,
+    this.assetsByPath = const {},
     this.badge,
   });
 
   final EditPlan plan;
+
+  /// Материалы по стабильному mediaId — основной способ сопоставления (§2).
+  final Map<String, MediaAsset> assetsById;
+
+  /// Резерв по локальному пути — только для старых черновиков с filePath.
   final Map<String, MediaAsset> assetsByPath;
   final Widget? badge;
 
@@ -48,6 +55,17 @@ class _MontagePlayerState extends State<MontagePlayer>
 
   List<EditClip> get _clips => widget.plan.clips;
   double get _total => widget.plan.computedDuration;
+
+  /// Материал клипа: сначала по mediaId (стабильно, §2), затем — по локальному
+  /// пути (старые черновики). Два одноимённых файла не путаются: mediaId
+  /// уникален. Отсутствие материала (напр. после reload без локального файла)
+  /// не роняет плеер — вызывающий код покажет placeholder.
+  MediaAsset? _assetFor(EditClip clip) {
+    final byId = widget.assetsById[clip.mediaId];
+    if (byId != null) return byId;
+    final path = clip.filePath;
+    return path == null ? null : widget.assetsByPath[path];
+  }
 
   @override
   void initState() {
@@ -106,7 +124,8 @@ class _MontagePlayerState extends State<MontagePlayer>
     if (_clips.isEmpty) return;
     _index = index;
     final clip = _clips[index];
-    final asset = widget.assetsByPath[clip.filePath];
+    final asset = _assetFor(clip);
+    final path = asset?.path;
 
     _clip.stop();
     _clip.duration = Duration(
@@ -114,7 +133,7 @@ class _MontagePlayerState extends State<MontagePlayer>
     );
 
     // Останавливаем предыдущее видео, если оно другое.
-    if (_current != null && _current != _videoCache[clip.filePath]) {
+    if (_current != null && _current != _videoCache[path]) {
       await _current!.pause();
     }
 
@@ -128,7 +147,7 @@ class _MontagePlayerState extends State<MontagePlayer>
 
     if (isPlayableVideo) {
       if (mounted) setState(() => _loading = true);
-      current = await _ensureVideo(clip.filePath);
+      current = await _ensureVideo(path!);
       if (current == null) {
         failed = true;
       } else {
@@ -248,13 +267,13 @@ class _MontagePlayerState extends State<MontagePlayer>
                 ),
                 if (widget.badge != null)
                   Positioned(top: 12, left: 12, child: widget.badge!),
-                if (plan.music.track.hasAudio)
+                if (!plan.audio.keepOriginal)
                   Positioned(
                     top: 12,
                     right: 12,
                     child: _Chip(
-                      icon: Icons.music_note_rounded,
-                      label: plan.music.track.label,
+                      icon: Icons.volume_off_rounded,
+                      label: 'Без звука',
                     ),
                   ),
                 // Тап по центру — play/pause.
@@ -310,7 +329,7 @@ class _MontagePlayerState extends State<MontagePlayer>
 
   Widget _buildClipVisual() {
     final clip = _clips[_index];
-    final asset = widget.assetsByPath[clip.filePath];
+    final asset = _assetFor(clip);
 
     if (_loading) {
       return const ColoredBox(
@@ -324,7 +343,7 @@ class _MontagePlayerState extends State<MontagePlayer>
         asset ??
             MediaAsset(
               id: clip.id,
-              path: clip.filePath,
+              path: clip.filePath ?? '',
               name: clip.sourceName.isEmpty ? 'Материал' : clip.sourceName,
               type: clip.type,
             ),
@@ -441,12 +460,15 @@ class _Caption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = Theme.of(context).textTheme.titleMedium!;
+    // Тот же шрифт (§6, default inter) и веса, что уйдут в MP4, а не системный.
+    final base = Theme.of(
+      context,
+    ).textTheme.titleMedium!.copyWith(fontFamily: kCaptionPreviewFont.family);
     final resolved = switch (style) {
-      CaptionStyle.clean => base.copyWith(fontWeight: FontWeight.w600),
-      CaptionStyle.bold => base.copyWith(fontWeight: FontWeight.w900),
+      CaptionStyle.clean => base.copyWith(fontWeight: FontWeight.w500),
+      CaptionStyle.bold => base.copyWith(fontWeight: FontWeight.w700),
       CaptionStyle.karaoke => base.copyWith(
-        fontWeight: FontWeight.w800,
+        fontWeight: FontWeight.w700,
         letterSpacing: 0.5,
       ),
     };

@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:reelio_ai/models/edit_plan.dart';
+import 'package:reelio_ai/models/transition.dart';
 import 'package:reelio_ai/models/enums.dart';
 import 'package:reelio_ai/models/render_request.dart';
 import 'package:reelio_ai/services/render_api_client.dart';
@@ -42,14 +43,14 @@ EditPlan _plan() => EditPlan(
   style: EditStyle.dynamicStyle,
   durationSeconds: 8,
   captions: CaptionSettings.defaults,
-  music: MusicSettings.defaults,
+  audio: AudioSettings.defaults,
   clips: const [
     EditClip(
       id: 'c1',
       filePath: '/local/a.mp4',
       type: MediaType.video,
       duration: 8,
-      transition: 'cut',
+      transition: TransitionSpec(type: TransitionType.cut),
       mediaId: 'asset_a',
       start: 0,
       end: 8,

@@ -18,7 +18,7 @@ class OnboardingScreen extends ConsumerWidget {
   static const _benefits = [
     (Icons.auto_awesome_rounded, 'AI выбирает лучшие моменты'),
     (Icons.subtitles_rounded, 'Автоматические субтитры'),
-    (Icons.graphic_eq_rounded, 'Монтаж под музыку'),
+    (Icons.graphic_eq_rounded, 'Оригинальный звук и переходы'),
   ];
 
   Future<void> _startNew(BuildContext context, WidgetRef ref) async {
@@ -59,7 +59,11 @@ class OnboardingScreen extends ConsumerWidget {
     final hasPlan = ref.read(projectProvider).plan != null;
     final route = switch (stage) {
       AppStage.onboarding || AppStage.upload => AppRoutes.upload,
-      AppStage.settings || AppStage.processing => AppRoutes.settings,
+      AppStage.settings => AppRoutes.settings,
+      // Обработку возобновляем на её экране: уже загруженные материалы (манифест)
+      // не грузятся повторно, а этап показывается верный. Готовый план — сразу
+      // предпросмотр.
+      AppStage.processing => hasPlan ? AppRoutes.preview : AppRoutes.processing,
       AppStage.preview ||
       AppStage.editor ||
       AppStage.export => hasPlan ? AppRoutes.preview : AppRoutes.settings,
@@ -105,7 +109,7 @@ class OnboardingScreen extends ConsumerWidget {
                       const SizedBox(height: 12),
                       Text(
                         'Загрузи видео и фото, опиши идею — Reelio AI соберёт '
-                        'вертикальный ролик с субтитрами и музыкой.',
+                        'вертикальный ролик с субтитрами и плавными переходами.',
                         style: theme.textTheme.bodyLarge?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -117,7 +121,6 @@ class OnboardingScreen extends ConsumerWidget {
                           child: DemoReelSurface(
                             style: EditStyle.dynamicStyle,
                             caption: 'Твоя история за 30 секунд',
-                            musicLabel: 'Energy',
                             badge: _DemoBadge(),
                           ),
                         ),

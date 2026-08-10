@@ -35,6 +35,9 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     }
 
     final total = plan.computedDuration;
+    final assetsById = <String, MediaAsset>{
+      for (final a in project.assets) a.id: a,
+    };
     final assetsByPath = <String, MediaAsset>{
       for (final a in project.assets) a.path: a,
     };
@@ -62,6 +65,7 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                         constraints: const BoxConstraints(maxHeight: 440),
                         child: MontagePlayer(
                           plan: plan,
+                          assetsById: assetsById,
                           assetsByPath: assetsByPath,
                           badge: const _DemoTag(),
                         ),
@@ -94,9 +98,13 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                       children: [
                         Expanded(
                           child: _InfoTile(
-                            icon: plan.music.track.icon,
-                            label: 'Музыка',
-                            value: plan.music.track.label,
+                            icon: plan.audio.keepOriginal
+                                ? Icons.volume_up_rounded
+                                : Icons.volume_off_rounded,
+                            label: 'Звук',
+                            value: plan.audio.keepOriginal
+                                ? 'Оригинал'
+                                : 'Без звука',
                           ),
                         ),
                         const SizedBox(width: 12),

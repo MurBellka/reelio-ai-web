@@ -1,0 +1,130 @@
+# Проверки ветки v2. Ничего не деплоит и не публикует.
+#
+# §7 итерации 3: контейнерный тест доказывает, что русский TextOverlay
+# ФИЗИЧЕСКИ виден в кадрах готового MP4. Одних тестов генерации ASS
+# недостаточно: между корректным .ass и видимой надписью стоит libass, поиск
+# шрифта и отрисовка кириллицы — всё это ломается молча.
+#
+# Облачные секреты этому workflow не нужны и не запрашиваются: сборка образа и
+# рендер синтетического ролика происходят целиком внутри runner'а.
+
+name: v2 verify
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/worker-v2/**'
+      - 'backend/beta/**'
+      - 'assets/fonts/**'
+      - 'docs/render-contract-v2.md'
+      - '.github/workflows/v2-verify.yml'
+  push:
+    branches: [reels-editor-v2]
+  workflow_dispatch:
+
+# Ни одного разрешения на запись: workflow только проверяет.
+permissions:
+  contents: read
+
+jobs:
+  node-tests:
+    name: Тесты (worker v1, worker-v2, beta)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Java нужна Firestore emulator'у (§4D.1). firebase-tools требует JDK 21+.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # ffmpeg из репозиториев Ubuntu собран с libass и libx264 — этого
+      # достаточно и для e2e рендера, и для проверки текста.
+      # Шрифты обязательны: раннер по умолчанию почти пуст, а ffmpeg здесь
+      # собран С libass — и фильтр subtitles на пустом наборе шрифтов падает,
+      # а не деградирует. Production-образ worker'а ставит те же fonts-dejavu-core,
+      # поэтому джоба тестов должна воспроизводить его окружение.
+      #
+      # Плюс каталог шрифтов §5 (assets/fonts) — их использует герметичный
+      # e2e-рендер (§4D.2), где worker-v2 вшивает русский TextOverlay.
+      - name: Установить ffmpeg и шрифты
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core fontconfig
+          sudo mkdir -p /usr/share/fonts/truetype/reelio
+          sudo cp assets/fonts/*.ttf /usr/share/fonts/truetype/reelio/
+          sudo fc-cache -f
+          fc-list | grep -qi 'montserrat medium' \
+            || (echo 'каталог шрифтов не проиндексирован' && exit 1)
+          ffmpeg -hide_banner -version | head -1
+          ffmpeg -hide_banner -filters | grep -q ' subtitles ' \
+            || (echo 'ffmpeg без libass' && exit 1)
+
+      # if: always() на каждом шаге — чтобы один упавший набор не скрывал
+      # состояние остальных двух. Иначе диагностика занимает по прогону на набор.
+      - name: Production worker v1 не должен сломаться
+        id: v1
+        working-directory: backend/worker
+        run: npm test
+
+      - name: worker-v2
+        if: always()
+        working-directory: backend/worker-v2
+        run: npm test
+
+      # beta прогоняется ПОД Firestore emulator (§4D.1): REELIO_REQUIRE_EMULATOR=1
+      # делает пропуск firestore-store.test ошибкой, а сам эмулятор поднимает
+      # firebase-tools через emulators:exec. Реальные облачные ресурсы не
+      # используются — demo-проект и локальный порт.
+      - name: beta backend (+ Firestore emulator)
+        if: always()
+        working-directory: backend/beta
+        run: |
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npm i -g firebase-tools >/dev/null 2>&1
+          # REELIO_REQUIRE_E2E=1 (§4D.2): герметичный e2e-рендер обязан
+          # выполниться (ffmpeg с libass + шрифты в этой джобе есть), пропуск —
+          # ошибка.
+          firebase emulators:exec --only firestore --project demo-reelio \
+            'REELIO_REQUIRE_EMULATOR=1 REELIO_REQUIRE_E2E=1 GOOGLE_CLOUD_PROJECT=demo-reelio npm test'
+
+      # Расхождения между сборками FFmpeg: печатает, ЧТО именно не сошлось.
+      # Запускается всегда — на зелёном прогоне это просто строка «пройдено».
+      - name: Диагностика рендера
+        if: always()
+        run: |
+          echo '--- worker v1 ---'
+          node tools/diagnose-render.mjs backend/worker || true
+          echo '--- worker-v2 ---'
+          node tools/diagnose-render.mjs backend/worker-v2 || true
+
+  text-visible:
+    name: Русский текст виден в кадрах (контейнер с libass)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Сборка образа локально, без реестра и без push: образ нужен только
+      # чтобы запустить проверку в тех же условиях, что и рабочий worker.
+      - name: Собрать образ проверки
+        run: docker build -f backend/worker-v2/Dockerfile.verify -t reelio-worker-v2-verify .
+
+      # Внутри образа Dockerfile.verify уже проверил наличие libass и шрифта;
+      # здесь запускается сама пиксельная проверка.
+      - name: Проверить видимость русского текста
+        run: docker run --rm reelio-worker-v2-verify
+
+      # Отдельная пиксельная проверка: regular/medium/bold доходят до MP4 как
+      # РАЗНЫЕ начертания (medium не выпадает в Regular). Тот же образ, другая
+      # точка входа.
+      - name: Проверить веса regular/medium/bold в экспорте
+        run: docker run --rm --entrypoint node reelio-worker-v2-verify tools/verify-weights.mjs
+
+      - name: Собрать рабочий образ worker-v2
+        run: docker build -f backend/worker-v2/Dockerfile -t reelio-ffmpeg-worker-v2 .

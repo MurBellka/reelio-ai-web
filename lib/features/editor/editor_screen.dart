@@ -6,11 +6,15 @@ import '../../core/theme.dart';
 import '../../models/edit_plan.dart';
 import '../../models/enums.dart';
 import '../../models/media_asset.dart';
+import '../../models/text_overlay.dart';
+import '../../models/text_template.dart';
+import '../../models/transition.dart';
 import '../../shared/profile_button.dart';
 import '../../shared/app_background.dart';
 import '../../shared/media_thumbnail.dart';
 import '../../shared/premium_widgets.dart';
 import '../../state/providers.dart';
+import 'text_overlay_editor.dart';
 
 const _captionColors = <(String, int)>[
   ('Белый', 0xFFFFFFFF),
@@ -42,6 +46,61 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   void dispose() {
     _captionController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickTransition(int index, EditClip clip) async {
+    final current = clip.transition.type;
+    final picked = await showModalBottomSheet<TransitionType>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _TransitionPickerSheet(current: current),
+    );
+    if (picked != null) {
+      ref.read(projectProvider.notifier).setClipTransition(index, picked);
+    }
+  }
+
+  Future<void> _addText() async {
+    final notifier = ref.read(projectProvider.notifier);
+    if ((ref.read(projectProvider).plan?.textOverlays.length ?? 0) >=
+        ProjectController.maxTextOverlays) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Достигнут предел в 20 текстовых слоёв.')),
+      );
+      return;
+    }
+    final template = await showModalBottomSheet<TextTemplate>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => const TextTemplatePickerSheet(),
+    );
+    if (template == null || !mounted) return;
+
+    final overlay = template.build(
+      id: ref.read(uuidProvider).v4(),
+      text: 'Новый текст',
+    );
+    if (!notifier.addTextOverlay(overlay)) return;
+    // Сразу открываем редактор, чтобы пользователь ввёл свой текст.
+    await _editOverlay(overlay);
+  }
+
+  Future<void> _editOverlay(TextOverlay overlay) async {
+    final notifier = ref.read(projectProvider.notifier);
+    final result = await showModalBottomSheet<TextOverlayEditResult>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => TextOverlayEditSheet(overlay: overlay),
+    );
+    if (result == null) return;
+    if (result.deleted) {
+      notifier.removeTextOverlay(result.overlay.id);
+    } else {
+      notifier.updateTextOverlay(result.overlay);
+    }
   }
 
   void _deleteClip(int index, EditPlan plan) {
@@ -99,7 +158,9 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                   children: [
                     const SectionHeader(
                       title: 'Таймлайн',
-                      subtitle: 'Перетащите, чтобы изменить порядок',
+                      subtitle:
+                          'Перетащите, чтобы изменить порядок. '
+                          'Нажмите на переход, чтобы сменить его',
                     ),
                     const SizedBox(height: 12),
                     _Timeline(
@@ -107,7 +168,48 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                       onReorder: controller.reorderClips,
                       onDelete: (i) => _deleteClip(i, plan),
                       onCover: (id) => controller.setCover(id),
+                      onPickTransition: (i) =>
+                          _pickTransition(i, plan.clips[i]),
                     ),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: SectionHeader(
+                            title: 'Текст',
+                            subtitle:
+                                'Перетащите слой пальцем, нажмите — чтобы '
+                                'изменить',
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: _addText,
+                          icon: const Icon(Icons.add_rounded),
+                          label: const Text('Добавить'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 360),
+                        child: TextStagePreview(
+                          plan: plan,
+                          onReposition: controller.repositionTextOverlay,
+                          onTapOverlay: _editOverlay,
+                        ),
+                      ),
+                    ),
+                    if (plan.textOverlays.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Слоёв: ${plan.textOverlays.length} из '
+                        '${ProjectController.maxTextOverlays}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 24),
                     const SectionHeader(title: 'Субтитры'),
                     const SizedBox(height: 8),
@@ -204,52 +306,44 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    const SectionHeader(title: 'Музыка'),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        for (final track in MusicTrack.values)
-                          ChoiceChip(
-                            avatar: Icon(track.icon, size: 18),
-                            label: Text(track.label),
-                            selected: plan.music.track == track,
-                            onSelected: (_) => controller.setPlanMusic(
-                              plan.music.copyWith(track: track),
+                    const SectionHeader(title: 'Звук'),
+                    const SizedBox(height: 8),
+                    SoftCard(
+                      child: Row(
+                        children: [
+                          Icon(
+                            plan.audio.keepOriginal
+                                ? Icons.volume_up_rounded
+                                : Icons.volume_off_rounded,
+                            color: theme.colorScheme.primary,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Оригинальный звук',
+                                  style: theme.textTheme.titleMedium,
+                                ),
+                                Text(
+                                  plan.audio.keepOriginal
+                                      ? 'Звук исходников сохранится'
+                                      : 'Ролик будет без звука',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                      ],
-                    ),
-                    if (plan.music.track.hasAudio) ...[
-                      const SizedBox(height: 12),
-                      SoftCard(
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.volume_up_rounded,
-                              color: theme.colorScheme.primary,
-                            ),
-                            Expanded(
-                              child: Slider(
-                                value: plan.music.volume,
-                                onChanged: (v) => controller.setPlanMusic(
-                                  plan.music.copyWith(volume: v),
-                                ),
-                              ),
-                            ),
-                            SizedBox(
-                              width: 44,
-                              child: Text(
-                                '${(plan.music.volume * 100).round()}%',
-                                textAlign: TextAlign.end,
-                                style: theme.textTheme.labelLarge,
-                              ),
-                            ),
-                          ],
-                        ),
+                          Switch(
+                            value: plan.audio.keepOriginal,
+                            onChanged: controller.setKeepOriginalSound,
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ],
                 ),
               ),
@@ -296,16 +390,18 @@ class _Timeline extends StatelessWidget {
     required this.onReorder,
     required this.onDelete,
     required this.onCover,
+    required this.onPickTransition,
   });
 
   final EditPlan plan;
   final void Function(int, int) onReorder;
   final void Function(int) onDelete;
   final void Function(String) onCover;
+  final void Function(int) onPickTransition;
 
   MediaAsset _assetOf(EditClip clip) => MediaAsset(
     id: clip.id,
-    path: clip.filePath,
+    path: clip.filePath ?? '',
     name: clip.sourceName,
     type: clip.type,
     durationSeconds: clip.type == MediaType.video ? clip.duration : null,
@@ -315,7 +411,7 @@ class _Timeline extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return SizedBox(
-      height: 168,
+      height: 182,
       child: ReorderableListView.builder(
         scrollDirection: Axis.horizontal,
         buildDefaultDragHandles: false,
@@ -327,17 +423,21 @@ class _Timeline extends StatelessWidget {
         itemBuilder: (context, index) {
           final clip = plan.clips[index];
           final isCover = plan.coverClipId == clip.id;
+          final transition = clip.transition.type;
+          // Только миниатюра — ручка перетаскивания. Чип перехода вынесен из
+          // слушателя, иначе тап по нему начинал бы drag.
           return Padding(
             key: ValueKey(clip.id),
             padding: const EdgeInsets.only(right: 12),
-            child: ReorderableDragStartListener(
-              index: index,
-              child: SizedBox(
-                width: 104,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
+            child: SizedBox(
+              width: 104,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ReorderableDragStartListener(
+                    index: index,
+                    child: SizedBox(
+                      height: 128,
                       child: Stack(
                         children: [
                           Positioned.fill(
@@ -389,11 +489,11 @@ class _Timeline extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
-                                '${index + 1}',
+                                '${index + 1} · ${Formatters.duration(clip.duration)}',
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.w700,
-                                  fontSize: 12,
+                                  fontSize: 11,
                                 ),
                               ),
                             ),
@@ -401,21 +501,121 @@ class _Timeline extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '${Formatters.duration(clip.duration)} · ${clip.transition}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 8),
+                  _TransitionChip(
+                    transition: transition,
+                    onTap: () => onPickTransition(index),
+                  ),
+                ],
               ),
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+/// Тап-цель выбора перехода под миниатюрой клипа.
+class _TransitionChip extends StatelessWidget {
+  const _TransitionChip({required this.transition, required this.onTap});
+  final TransitionType transition;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.sm),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.5,
+          ),
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+        ),
+        child: Row(
+          children: [
+            Icon(transition.icon, size: 15, color: theme.colorScheme.primary),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                transition.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall,
+              ),
+            ),
+            Icon(
+              Icons.expand_more_rounded,
+              size: 15,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Каталог переходов v2 (§2.1), сгруппированный по разделам. Возвращает
+/// выбранный тип через `Navigator.pop`.
+class _TransitionPickerSheet extends StatelessWidget {
+  const _TransitionPickerSheet({required this.current});
+  final TransitionType current;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final byGroup = TransitionType.byGroup;
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+        ),
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          children: [
+            Text('Переход', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(
+              'Как один клип сменяется следующим',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            for (final group in byGroup.keys) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 12, bottom: 8),
+                child: Text(
+                  group.label,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final t in byGroup[group]!)
+                    ChoiceChip(
+                      avatar: Icon(t.icon, size: 18),
+                      label: Text(t.label),
+                      selected: t == current,
+                      onSelected: (_) => Navigator.of(context).pop(t),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

@@ -4,14 +4,22 @@ import 'package:uuid/uuid.dart';
 import '../core/app_config.dart';
 import '../core/media_validation.dart';
 import '../models/edit_plan.dart';
+import '../models/edit_request.dart';
 import '../models/enums.dart';
 import '../models/export_settings.dart';
 import '../models/media_asset.dart';
 import '../models/project_state.dart';
+import '../models/text_overlay.dart';
+import '../models/transition.dart';
+import '../models/upload_manifest.dart';
+import '../models/upload_ticket.dart' show UploadProgress;
 import '../services/ai_editing_service.dart';
+import '../services/analysis_api_client.dart';
 import 'auth_providers.dart';
+import '../services/beta_ai_editing_service.dart';
 import '../services/gemini_ai_editing_service.dart';
 import '../services/media_picker_service.dart';
+import 'render_providers.dart';
 import '../services/storage_service.dart';
 import '../services/video_export_service.dart';
 
@@ -21,12 +29,41 @@ final storageServiceProvider = Provider<StorageService>(
   (_) => const StorageService(),
 );
 
-/// Выбирает реальный Gemini-планировщик, если задан backend
-/// (`--dart-define=REELIO_BACKEND_URL=…`), иначе — мок (Demo Mode).
+/// Клиент analysis API беты (§4C.4). Токены берутся свежими на каждый запрос.
+final analysisApiClientProvider = Provider<AnalysisApiClient>((ref) {
+  final client = AnalysisApiClient(
+    baseUrl: AppConfig.betaBackendBaseUrl,
+    tokens: ref.watch(authTokensProvider),
+  );
+  ref.onDispose(client.close);
+  return client;
+});
+
+/// Выбор планировщика (§4C.2, §4C.7, §4C.8):
+///   • флаг v2 выключен → прежний v1 `/edit-plan` (Gemini), поведение как было;
+///   • флаг v2 включён без beta URL → недоступность беты (понятная ошибка);
+///   • флаг v2 включён с beta URL → analysis-пайплайн на beta, без смешивания;
+///   • backend'а нет вовсе → мок (Demo Mode).
 final aiServiceProvider = Provider<AiEditingService>((ref) {
+  if (AppConfig.betaUnavailable) {
+    return const _BetaUnavailableService();
+  }
+  if (AppConfig.isV2Active) {
+    final service = BetaAiEditingService(
+      client: ref.watch(analysisApiClientProvider),
+      projectId: ref.read(projectProvider).id,
+      uploadAssets: (request, {onProgress, isCancelled}) => _uploadForBeta(
+        ref,
+        request,
+        onProgress: onProgress,
+        isCancelled: isCancelled,
+      ),
+    );
+    ref.onDispose(service.cancel);
+    return service;
+  }
   if (AppConfig.hasBackend) {
-    // /edit-plan защищён так же, как остальной API: без токенов он ответит
-    // 401, и до Gemini запрос не дойдёт.
+    // v1: /edit-plan защищён так же, как остальной API; без токенов — 401.
     final service = GeminiAiEditingService(
       tokens: ref.watch(authTokensProvider),
     );
@@ -35,6 +72,51 @@ final aiServiceProvider = Provider<AiEditingService>((ref) {
   }
   return const MockAiEditingService();
 });
+
+/// Загрузка материалов для анализа beta через ЕДИНЫЙ координатор (§4D.3):
+/// уже загруженные материалы переиспользуются, новые грузятся один раз и
+/// попадают в манифест — рендер потом не грузит их повторно.
+Future<Map<String, String>> _uploadForBeta(
+  Ref ref,
+  EditRequest request, {
+  void Function(UploadProgress progress)? onProgress,
+  bool Function()? isCancelled,
+}) async {
+  final uid = ref.read(currentUidProvider) ?? '';
+  final project = ref.read(projectProvider);
+  final coordinator = ref.read(uploadCoordinatorProvider);
+  final result = await coordinator.ensureUploaded(
+    assets: request.assets,
+    manifest: project.uploadManifest,
+    ownerUid: uid,
+    projectId: project.id,
+    onProgress: onProgress,
+    isCancelled: isCancelled,
+  );
+  ref.read(projectProvider.notifier).recordUploads(result.uploaded);
+  return result.objectPaths;
+}
+
+/// Флаг v2 поднят, но адрес беты не задан: планирование недоступно, объясняем
+/// пользователю понятно (§4C.7).
+class _BetaUnavailableService implements AiEditingService {
+  const _BetaUnavailableService();
+
+  @override
+  bool get isDemo => false;
+
+  @override
+  void cancel() {}
+
+  @override
+  Future<EditPlan> createEditPlan(
+    EditRequest request, {
+    ProcessingReporter? onProgress,
+  }) async => throw const AiEditingException(
+    'Бета недоступна: не задан адрес beta-сервиса. '
+    'Обновите приложение или попробуйте позже.',
+  );
+}
 
 final exportServiceProvider = Provider<VideoExportService>(
   (_) => const MockVideoExportService(),
@@ -90,8 +172,26 @@ class ProjectController extends Notifier<ProjectState> {
   }
 
   void removeAsset(String id) {
+    final assets = state.assets.where((a) => a.id != id).toList();
+    // Удалённый материал выпадает и из манифеста загрузки.
     _emit(
-      state.copyWith(assets: state.assets.where((a) => a.id != id).toList()),
+      state.copyWith(
+        assets: assets,
+        uploadManifest: state.uploadManifest.retainOnly({
+          for (final a in assets) a.id,
+        }),
+      ),
+    );
+  }
+
+  /// §4D.3: фиксирует вновь загруженные материалы в манифесте, чтобы analysis
+  /// и render не грузили их повторно (переживает «Назад» и перезагрузку).
+  void recordUploads(List<UploadedAsset> uploaded) {
+    if (uploaded.isEmpty) return;
+    _emit(
+      state.copyWith(
+        uploadManifest: state.uploadManifest.withUploaded(uploaded),
+      ),
     );
   }
 
@@ -132,11 +232,18 @@ class ProjectController extends Notifier<ProjectState> {
     state.copyWith(captions: state.captions.copyWith(sampleText: text)),
   );
 
-  void setMusicTrack(MusicTrack track) =>
-      _emit(state.copyWith(music: state.music.copyWith(track: track)));
-
-  void setMusicVolume(double volume) =>
-      _emit(state.copyWith(music: state.music.copyWith(volume: volume)));
+  /// Единственный звуковой переключатель (контракт v2 §1): сохранять ли
+  /// оригинальный звук исходников. Обновляет и настройки проекта, и план,
+  /// если он уже собран, — чтобы правка в редакторе доходила до рендера.
+  void setKeepOriginalSound(bool keepOriginal) {
+    final audio = AudioSettings(keepOriginal: keepOriginal);
+    _emit(
+      state.copyWith(
+        audio: audio,
+        plan: state.plan?.copyWith(audio: audio),
+      ),
+    );
+  }
 
   // --- Этапы и план --------------------------------------------------------
 
@@ -146,7 +253,7 @@ class ProjectController extends Notifier<ProjectState> {
     state.copyWith(
       plan: plan,
       captions: plan.captions,
-      music: plan.music,
+      audio: plan.audio,
       coverAssetId: plan.coverClipId,
     ),
   );
@@ -181,22 +288,79 @@ class ProjectController extends Notifier<ProjectState> {
     _emit(state.copyWith(plan: plan.copyWith(clips: list)));
   }
 
+  /// Меняет ТИП перехода конкретного клипа, СОХРАНЯЯ его длительность и
+  /// интенсивность (объект перехода v2 §2.1 не сводится к строке).
+  void setClipTransition(int index, TransitionType type) {
+    final plan = state.plan;
+    if (plan == null || index < 0 || index >= plan.clips.length) return;
+    final list = [...plan.clips];
+    list[index] = list[index].copyWith(
+      transition: list[index].transition.copyWith(type: type),
+    );
+    _emit(state.copyWith(plan: plan.copyWith(clips: list)));
+  }
+
+  // --- Текстовые слои (§4) -------------------------------------------------
+
+  /// Потолок числа слоёв из контракта §4.
+  static const int maxTextOverlays = 20;
+
+  /// Добавляет слой, если не превышен потолок. Возвращает `false`, если
+  /// слоёв уже 20.
+  bool addTextOverlay(TextOverlay overlay) {
+    final plan = state.plan;
+    if (plan == null || plan.textOverlays.length >= maxTextOverlays) {
+      return false;
+    }
+    _emit(
+      state.copyWith(
+        plan: plan.copyWith(textOverlays: [...plan.textOverlays, overlay]),
+      ),
+    );
+    return true;
+  }
+
+  /// Заменяет слой с тем же id (правки из листа редактирования).
+  void updateTextOverlay(TextOverlay overlay) {
+    final plan = state.plan;
+    if (plan == null) return;
+    final list = [
+      for (final o in plan.textOverlays)
+        if (o.id == overlay.id) overlay else o,
+    ];
+    _emit(state.copyWith(plan: plan.copyWith(textOverlays: list)));
+  }
+
+  void removeTextOverlay(String id) {
+    final plan = state.plan;
+    if (plan == null) return;
+    _emit(
+      state.copyWith(
+        plan: plan.copyWith(
+          textOverlays: plan.textOverlays.where((o) => o.id != id).toList(),
+        ),
+      ),
+    );
+  }
+
+  /// Перетаскивание: новый центр слоя в долях кадра (0..1 зажимается в
+  /// copyWith). Безопасную зону не форсируем — только предупреждаем в UI.
+  void repositionTextOverlay(String id, double x, double y) {
+    final plan = state.plan;
+    if (plan == null) return;
+    final list = [
+      for (final o in plan.textOverlays)
+        if (o.id == id) o.copyWith(x: x, y: y) else o,
+    ];
+    _emit(state.copyWith(plan: plan.copyWith(textOverlays: list)));
+  }
+
   void setPlanCaptions(CaptionSettings captions) {
     final plan = state.plan;
     _emit(
       state.copyWith(
         captions: captions,
         plan: plan?.copyWith(captions: captions),
-      ),
-    );
-  }
-
-  void setPlanMusic(MusicSettings music) {
-    final plan = state.plan;
-    _emit(
-      state.copyWith(
-        music: music,
-        plan: plan?.copyWith(music: music),
       ),
     );
   }
